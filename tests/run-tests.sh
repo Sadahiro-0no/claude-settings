@@ -136,6 +136,18 @@ t1=$(date +%s%N)
 ms=$(( (t1 - t0) / 1000000 ))
 if [ "$ms" -lt 500 ]; then ok "増分呼び出し ${ms}ms (< 500ms)"; else ng "増分呼び出しが遅い: ${ms}ms"; fi
 
+echo "== 11. バックグラウンド消費スキャナ =="
+SCAN="$ROOT/home/skills/cost-audit/scripts/scan_background.sh"
+BADP="$SB/badproj"; mkdir -p "$BADP/.claude/hooks"
+echo 'claude -p "summarize" --model haiku' > "$BADP/.claude/hooks/expensive-hook.sh"
+out=$(bash "$SCAN" "$BADP" 2>/dev/null)
+case "$out" in *expensive-hook.sh*) ok "フック内の claude -p を検出";; *) ng "claude -p フック未検出";; esac
+CLEANP="$SB/cleanproj"; mkdir -p "$CLEANP/.claude/hooks"
+echo 'jq -r .foo input.json' > "$CLEANP/.claude/hooks/ok-hook.sh"
+out=$(bash "$SCAN" "$CLEANP" 2>/dev/null)
+case "$out" in *ok-hook.sh*) ng "無害なフックを誤検出";; *) ok "無害なフックは検出しない";; esac
+case "$out" in *"結果:"*) ok "サマリ行を出力";; *) ng "サマリ行なし";; esac
+
 echo ""
 echo "結果: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

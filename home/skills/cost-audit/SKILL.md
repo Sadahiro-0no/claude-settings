@@ -22,6 +22,7 @@ description: Claude Code 設定のトークン消費・コスト監査。setting
 | プロジェクトメモリ | `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`(@import 先も辿る) |
 | MCP | `.mcp.json`, `~/.claude.json` 内の mcpServers、`claude mcp list` の結果 |
 | エージェント | `~/.claude/agents/*.md`, `.claude/agents/*.md` |
+| スキル | `~/.claude/skills/*/SKILL.md`, `.claude/skills/*/SKILL.md`(プラグイン由来含む) |
 | フック | 各 settings.json 内の `hooks`、参照先スクリプト |
 | バックアップ | `~/.claude/backup-*/`(install.sh 由来。あれば新旧マージ監査モードで動く) |
 
@@ -34,6 +35,9 @@ description: Claude Code 設定のトークン消費・コスト監査。setting
    `bash ~/.claude/skills/cost-audit/scripts/estimate_tokens.sh <files...>` を実行。
 2. **MCP のツール定義量**: 接続サーバー数とツール数を数える。ツール定義は**毎リクエストの入力トークン**になる(1サーバーあたり数百〜数千トークン)。
 3. **permissions の網羅性**: deny に生成物・ロックファイル・シークレットが含まれているか。
+4. **スキル資産**: 各スキルの description(常駐)と本文(発火時)のトークン量を `estimate_tokens.sh` で計測し一覧化。
+5. **バックグラウンド消費**: `bash ~/.claude/skills/cost-audit/scripts/scan_background.sh <プロジェクトルート>` を実行
+   (放置プロセス・cron/タイマー・フックからのモデル呼び出しを検出)。
 
 ## フェーズ3: チェックリスト照合
 
@@ -42,8 +46,11 @@ description: Claude Code 設定のトークン消費・コスト監査。setting
 - **A. モデル選択** — メイン/バックグラウンド/サブエージェントのモデル指定
 - **B. プロンプトキャッシュ** — キャッシュを壊す設定(動的コンテンツ、キャッシュ無効化変数)
 - **C. コンテキスト** — CLAUDE.md 肥大化、MCP 過剰、deny 不足
-- **D. thinking / 出力** — 常時 thinking、出力上限
-- **E. 可視化・運用** — ステータスライン、テレメトリ
+- **D. thinking / 出力** — 常時 thinking、出力上限、出力スタイル
+- **E. 可視化・運用** — ステータスライン、予算ガード、テレメトリ
+- **F. スキル資産** — 常駐 description 総量、本文の肥大化、決定論的処理のスクリプト化、誤発火。
+  **スキルの目的と出力品質は維持したまま構造だけを最適化する**(削除・統合はユーザー承認必須)
+- **G. バックグラウンド消費** — 放置プロセス、cron/タイマー、フックからのモデル呼び出し
 
 ## フェーズ4: レポート
 

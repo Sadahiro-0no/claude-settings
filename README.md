@@ -72,9 +72,11 @@ bash scripts/install.sh
 
 以下を自動で実施します:
 
-- `settings.json`(user / project / local)、`CLAUDE.md`、`.mcp.json`、agents、hooks の棚卸し
-- CLAUDE.md・ルールファイルのトークン量見積り(同梱スクリプト)
-- チェックリスト(`references/checklist.md`)との照合 — キャッシュを壊す設定、常時読み込まれる不要コンテキスト、モデル設定の誤り等を検出
+- `settings.json`(user / project / local)、`CLAUDE.md`、`.mcp.json`、agents、hooks、**既存スキル資産**の棚卸し
+- CLAUDE.md・各スキルのトークン量見積り(同梱スクリプト)。スキルは「常駐する description」と「発火時に読まれる本文」を分けて計測
+- **既存スキルの構造最適化** — 目的と出力品質は維持したまま、肥大化した本文の references/ 分離、決定論的処理の scripts/ 化、誤発火しやすい description の改善を提案(削除・統合は必ずユーザー承認)
+- **バックグラウンド消費のスキャン**(`scan_background.sh`)— 放置された claude プロセス、cron/タイマーからのヘッドレス実行、フック内からのモデル呼び出し(イベント毎に課金される最悪パターン)を機械的に検出
+- チェックリスト(`references/checklist.md`、A〜G の7カテゴリ)との照合 — キャッシュを壊す設定、常時読み込まれる不要コンテキスト、モデル設定の誤り等を検出
 - 重要度・推定インパクト付きのレポートと、承認後の修正適用
 
 ## テストと実タスクシミュレーション
