@@ -10,9 +10,15 @@
 #
 # モデル呼び出しを一切行わない決定論的スクリプトなので、ガード自体のコストはゼロ。
 #
+# さらに「ターン数に連動するペースガード」を持つ:
+#   目標ペース(既定 $0.10/ターン = 10ターン ≒ $1)を超えて消費している場合、
+#   5ターンごとに一度ツール実行をブロックして効率化を指示する。
+#   ペース超過は品質を落とす理由にはしない — 削るのは無駄(再読・過剰探索・冗長出力)。
+#
 # 設定(settings.json の env またはシェル環境変数):
 #   CLAUDE_SESSION_BUDGET_USD       セッション上限(USD)。デフォルト 5
 #   CLAUDE_SESSION_BUDGET_WARN_USD  警告閾値(USD)。デフォルトは上限の 50%
+#   CLAUDE_TURN_BUDGET_USD          目標ペース(USD/ターン)。デフォルト 0.10
 #
 # 制約(README/docs 参照):
 #   - 進行中の1リクエストは止められない(検知は次のフック発火時点)
@@ -78,6 +84,49 @@ if [ "$over_hard" = "1" ]; then
   fi
   exit 2
 fi
+
+# ---- ペースガード(10ターン ≒ $1 目標) --------------------------------------
+# ユーザーの実プロンプト数をターン数として数える(ツール結果・メタ行は除外)
+TURNB="${CLAUDE_TURN_BUDGET_USD:-0.10}"
+turns=$(jq -s '
+  [ .[]
+    | select(.type == "user")
+    | select(.isMeta != true)
+    | select(.toolUseResult == null)
+    | (.message.content // empty)
+    | if type == "string" then 1
+      elif type == "array" then
+        (if any(.[]?; (.type? // "") == "tool_result") then empty else 1 end)
+      else empty end
+  ] | length
+' "$transcript" 2>/dev/null) || turns=0
+
+# 立ち上がりのノイズを避けるため3ターン目から判定。許容額 = (ターン数+1) × ペース
+if [ "$event" = "PreToolUse" ] && [ "${turns:-0}" -ge 3 ]; then
+  allowed=$(awk -v t="$turns" -v b="$TURNB" 'BEGIN{printf "%.4f", (t + 1) * b}')
+  over_pace=$(awk -v c="$cost" -v a="$allowed" 'BEGIN{print (c > a) ? 1 : 0}')
+  if [ "$over_pace" = "1" ]; then
+    pmarker="${TMPDIR:-/tmp}/claude-budget-pace-${session}"
+    last=$(cat "$pmarker" 2>/dev/null || echo "-999")
+    if [ $(( turns - last )) -ge 5 ]; then
+      printf '%s' "$turns" > "$pmarker"
+      pace10=$(awk -v c="$cost" -v t="$turns" 'BEGIN{printf "%.2f", c / t * 10}')
+      target10=$(awk -v b="$TURNB" 'BEGIN{printf "%.2f", b * 10}')
+      {
+        echo "ペース超過: ここまで ${turns} ターンで推定 \$${cost_fmt}(10ターン換算 \$${pace10}、目標 \$${target10})。"
+        echo "品質を落とすのではなく、無駄を削って目標ペースに戻すこと:"
+        echo " - 既に読んだファイル・確認済みの事実を再取得しない"
+        echo " - 横断的な探索・調査は explore サブエージェントに委譲する"
+        echo " - 出力は結論と変更箇所のみ。ファイル全文や長い引用の再掲をしない"
+        echo " - 同じ検証やビルドを不必要に繰り返さない"
+        echo " - 現在のタスクに不要な文脈が多いなら、ユーザーに /compact を提案する"
+        echo "この指示を反映したら、同じツール呼び出しを再実行して作業を続行してください。タスクの完遂が最優先であることは変わらない。"
+      } >&2
+      exit 2
+    fi
+  fi
+fi
+# -----------------------------------------------------------------------------
 
 if [ "$over_warn" = "1" ] && [ "$event" = "PreToolUse" ]; then
   marker="${TMPDIR:-/tmp}/claude-budget-warn-${session}"
