@@ -15,6 +15,25 @@ input=$(cat 2>/dev/null || true)
 # 古い警告マーカーの掃除(2日以上前のもの)
 find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'claude-budget-*' -mtime +2 -delete 2>/dev/null || true
 
+# 仕様ドリフト検知③: Claude Code 本体の更新を検知したら再監査を促す
+# (実行ファイルのフィンガープリント比較。stat のみ、コストゼロ)
+cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+bin=$(command -v claude 2>/dev/null || true)
+if [ -n "$bin" ]; then
+  real=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
+  fp=$(stat -c '%s %Y' "$real" 2>/dev/null || stat -f '%z %m' "$real" 2>/dev/null || true)
+  vf="$cfg/.claude-code-fingerprint"
+  if [ -n "$fp" ]; then
+    old=$(cat "$vf" 2>/dev/null || true)
+    if [ -z "$old" ]; then
+      printf '%s' "$fp" > "$vf" 2>/dev/null || true
+    elif [ "$old" != "$fp" ]; then
+      printf '%s' "$fp" > "$vf" 2>/dev/null || true
+      echo "Claude Code 本体が更新されています。仕様変更でコスト管理設定(フック・監査)の前提が変わっている可能性があります。区切りの良いところで selftest_guard.sh による自己診断と /cost-audit の実行をユーザーに提案してください。"
+    fi
+  fi
+fi
+
 cwd=""
 if command -v jq >/dev/null 2>&1 && [ -n "$input" ]; then
   cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || true)

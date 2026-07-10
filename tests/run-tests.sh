@@ -152,7 +152,7 @@ echo "== 12. 監査ドキュメントの整合性 =="
 CHECK="$ROOT/home/skills/cost-audit/references/checklist.md"
 CMAP="$ROOT/home/skills/cost-audit/references/coverage-map.md"
 [ -f "$CMAP" ] && ok "coverage-map.md が存在" || ng "coverage-map.md がない"
-for cat in A B C D E F G; do
+for cat in A B C D E F G H; do
   grep -q "^## $cat\." "$CHECK" && ok "checklist にカテゴリ $cat" || ng "checklist にカテゴリ $cat がない"
 done
 # coverage-map が参照する全チェック項目 ID が checklist に実在するか
@@ -162,6 +162,33 @@ for id in $(grep -oE '[A-G]-[0-9]+b?' "$CMAP" | sort -u); do
 done
 [ "$missing" -eq 0 ] && ok "coverage-map の全参照先が checklist に実在"
 grep -q 'coverage-map' "$ROOT/home/skills/cost-audit/SKILL.md" && ok "SKILL.md がフェーズ0で coverage-map を参照" || ng "SKILL.md が coverage-map 未参照"
+
+echo "== 13. 仕様ドリフト検知 =="
+SELFTEST="$ROOT/home/skills/cost-audit/scripts/selftest_guard.sh"
+if bash "$SELFTEST" "$GUARD" >/dev/null 2>&1; then ok "自己診断カナリアが合格"; else ng "自己診断カナリアが失敗"; fi
+# フック入力スキーマドリフト: transcript_path が無い入力 → 1日1回警告
+rm -f "${TMPDIR:-/tmp}/claude-budget-schemawarn"
+printf '{"hook_event_name":"PreToolUse","tool_name":"Read"}' | bash "$GUARD" >/dev/null 2>&1
+assert_exit "フィールド欠落入力で警告(初回)" 2 $?
+printf '{"hook_event_name":"PreToolUse","tool_name":"Read"}' | bash "$GUARD" >/dev/null 2>&1
+assert_exit "同日2回目は素通し" 0 $?
+rm -f "${TMPDIR:-/tmp}/claude-budget-schemawarn"
+# トランスクリプト解釈不能(200KB超・集計ゼロ)→ セッション毎1回警告
+TR="$SB/drift.jsonl"; SID=tst-d1
+yes '{"totally":"different","schema":"vXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"}' | head -3000 > "$TR"
+guard_in PreToolUse $SID Read x "$TR" | bash "$GUARD" >/dev/null 2>&1
+assert_exit "集計ゼロの大型セッションで警告(初回)" 2 $?
+guard_in PreToolUse $SID Read x "$TR" | bash "$GUARD" >/dev/null 2>&1
+assert_exit "同セッション2回目は素通し" 0 $?
+# 本体更新検知(SessionStart)
+BIND="$SB/bin"; mkdir -p "$BIND"
+printf '#!/bin/sh\nexit 0\n' > "$BIND/claude"; chmod +x "$BIND/claude"
+CFG="$SB/cfg"; mkdir -p "$CFG"; WV="$SB/projv"; mkdir -p "$WV"
+out=$(printf '{"cwd":"%s"}' "$WV" | PATH="$BIND:$PATH" CLAUDE_CONFIG_DIR="$CFG" bash "$NOTICE")
+case "$out" in *更新されています*) ng "初回でフィンガープリント未保存のまま通知";; *) ok "初回は保存のみ(通知なし)";; esac
+sleep 1.1; echo "# changed" >> "$BIND/claude"
+out=$(printf '{"cwd":"%s"}' "$WV" | PATH="$BIND:$PATH" CLAUDE_CONFIG_DIR="$CFG" bash "$NOTICE")
+case "$out" in *更新されています*) ok "本体更新を検知して再監査を促す";; *) ng "本体更新を検知できない: [$out]";; esac
 
 echo ""
 echo "結果: PASS=$PASS FAIL=$FAIL"

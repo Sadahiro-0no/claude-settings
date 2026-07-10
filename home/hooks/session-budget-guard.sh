@@ -31,6 +31,24 @@ command -v jq >/dev/null 2>&1 || exit 0
 event=$(printf '%s' "$input" | jq -r '.hook_event_name // empty')
 transcript=$(printf '%s' "$input" | jq -r '.transcript_path // empty')
 session=$(printf '%s' "$input" | jq -r '.session_id // "unknown"')
+
+# 仕様ドリフト検知①: フック入力は来ているのに想定フィールドが読めない場合、
+# Claude Code 更新によるスキーマ変更の可能性が高い。フェイルオープンで黙って
+# 無効化される代わりに、1日1回だけ警告して表面化させる。
+if [ -n "$input" ] && { [ -z "$event" ] || [ -z "$transcript" ]; }; then
+  m="${TMPDIR:-/tmp}/claude-budget-schemawarn"
+  if [ ! -f "$m" ] || [ -n "$(find "$m" -mtime +1 2>/dev/null)" ]; then
+    touch "$m"
+    {
+      echo "予算ガードがフック入力から必要フィールド(hook_event_name / transcript_path)を読めません。"
+      echo "Claude Code の更新による仕様変更の可能性があります。コスト保護は現在機能していません。"
+      echo "対処: bash ~/.claude/skills/cost-audit/scripts/selftest_guard.sh で自己診断し、/cost-audit を実行。"
+      echo "(この警告は1日1回のみ。作業は同じ操作の再実行で続行できます)"
+    } >&2
+    exit 2
+  fi
+  exit 0
+fi
 [ -n "$transcript" ] && [ -f "$transcript" ] || exit 0
 
 HARD="${CLAUDE_SESSION_BUDGET_USD:-5}"
@@ -116,6 +134,22 @@ if [ "$size" -gt "$prev_off" ]; then
 fi
 
 cost=$(awk -v r="$raw" 'BEGIN{printf "%.6f", r / 1000000}')
+
+# 仕様ドリフト検知②: セッションが十分進んでいる(200KB超)のに usage もターンも
+# 一切解釈できていない場合、トランスクリプトのスキーマ変更の可能性。一度だけ警告。
+if [ "$size" -gt 200000 ] && [ "${turns:-0}" -eq 0 ] && awk -v r="$raw" 'BEGIN{exit !(r + 0 == 0)}'; then
+  m="${TMPDIR:-/tmp}/claude-budget-sanity-${session}"
+  if [ ! -f "$m" ]; then
+    touch "$m"
+    {
+      echo "予算ガードがこのセッションのトランスクリプトを解釈できていません(集計ゼロのまま)。"
+      echo "Claude Code の更新でトランスクリプト形式が変わった可能性があり、コスト保護が無効化されています。"
+      echo "対処: bash ~/.claude/skills/cost-audit/scripts/selftest_guard.sh で自己診断し、結果をユーザーに報告してください。"
+      echo "(この警告はセッション毎に1回のみ。作業は同じ操作の再実行で続行できます)"
+    } >&2
+    exit 2
+  fi
+fi
 
 over_hard=$(awk -v c="$cost" -v h="$HARD" 'BEGIN{print (c >= h) ? 1 : 0}')
 over_warn=$(awk -v c="$cost" -v w="$WARN" 'BEGIN{print (c >= w) ? 1 : 0}')

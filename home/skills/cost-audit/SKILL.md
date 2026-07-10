@@ -53,6 +53,8 @@ description: Claude Code 設定のトークン消費・コスト監査。setting
 4. **スキル資産**: 各スキルの description(常駐)と本文(発火時)のトークン量を `estimate_tokens.sh` で計測し一覧化。
 5. **バックグラウンド消費**: `bash ~/.claude/skills/cost-audit/scripts/scan_background.sh <プロジェクトルート>` を実行
    (放置プロセス・cron/タイマー・フックからのモデル呼び出しを検出)。
+6. **自己診断(必須)**: `bash ~/.claude/skills/cost-audit/scripts/selftest_guard.sh` を実行。
+   NG の場合はコスト保護が機能していないため、**レポートの先頭で報告**する(H-1)。
 
 ## フェーズ3: チェックリスト照合
 
@@ -66,6 +68,7 @@ description: Claude Code 設定のトークン消費・コスト監査。setting
 - **F. スキル資産** — 常駐 description 総量、本文の肥大化、決定論的処理のスクリプト化、誤発火。
   **スキルの目的と出力品質は維持したまま構造だけを最適化する**(削除・統合はユーザー承認必須)
 - **G. バックグラウンド消費** — 放置プロセス、cron/タイマー、フックからのモデル呼び出し
+- **H. 仕様ドリフト** — Claude Code 更新でガードが静かに無効化されていないか(自己診断・更新検知)
 
 ## フェーズ4: レポート
 
