@@ -34,18 +34,23 @@ claude-settings/
 │   ├── output-styles/
 │   │   └── terse.md             # 定型作業フェーズ用の電報調スタイル(/output-style terse)
 │   └── skills/
-│       └── cost-audit/          # ★ 既存設定を監査・見直すスキル(/cost-audit で起動)
-│           ├── SKILL.md
-│           ├── references/checklist.md
-│           └── scripts/estimate_tokens.sh
+│       └── cost-audit/          # ★ 既存設定・スキル・環境を監査するスキル(/cost-audit で起動)
+│           ├── SKILL.md                      # 監査手順(フェーズ0: 完全列挙 → 分類 → 未分類ゼロ)
+│           ├── references/checklist.md       # A〜G 7カテゴリのチェックリスト
+│           ├── references/coverage-map.md    # 消費面の分類地図(見落とし防止の基盤)
+│           ├── scripts/estimate_tokens.sh    # トークン量見積り
+│           └── scripts/scan_background.sh    # バックグラウンド消費の検出
 ├── project-template/            # 各プロジェクトの .claude/ に置くテンプレート
 │   ├── settings.json
 │   ├── CLAUDE.md
 │   └── .gitignore               # handoff.md 等の一時ファイルを除外
 ├── docs/
 │   └── cost-optimization.md     # なぜ効くのか(価格構造・キャッシュ経済・アンチパターン)
-└── scripts/
-    └── install.sh               # ~/.claude へ導入(既存設定は保持マージ+バックアップ)
+├── scripts/
+│   └── install.sh               # ~/.claude へ導入(既存設定は保持マージ+バックアップ)
+└── tests/
+    ├── run-tests.sh             # 回帰テスト(50項目超)
+    └── simulate-profiles.sh     # 実用タスク3種のシミュレーション(10T≒$1 検証)
 ```
 
 ## 導入手順
