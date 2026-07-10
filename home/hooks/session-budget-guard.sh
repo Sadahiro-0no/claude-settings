@@ -58,6 +58,7 @@ if [ -f "$state" ]; then
   if ! [[ "$prev_off" =~ ^[0-9]+$ && "$prev_raw" =~ ^[0-9]+(\.[0-9]+)?$ && "$prev_turns" =~ ^[0-9]+$ ]] \
      || [ "$prev_off" -gt "$size" ]; then
     prev_off=0; prev_raw=0; prev_turns=0
+    rm -f "$state"   # 壊れた/別ファイルの状態を残さない
   fi
 fi
 
