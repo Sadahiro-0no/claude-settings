@@ -20,7 +20,11 @@ assert_exit() { # desc expected actual
 }
 
 SB="$(mktemp -d)"
-cleanup() { rm -rf "$SB"; rm -f "${TMPDIR:-/tmp}"/claude-budget-*-tst* 2>/dev/null; }
+# TMPDIR をサンドボックス配下に隔離する。ガードや statusline が作る状態ファイル・
+# 警告マーカー(セッション非依存の共通マーカー含む)がすべてここに入るため、
+# 本番セッションのマーカーを汚染せず、テスト間の残留干渉も起きない。
+export TMPDIR="$SB/tmp"; mkdir -p "$TMPDIR"
+cleanup() { rm -rf "$SB"; }
 trap cleanup EXIT
 
 user_line()  { printf '{"uuid":"u%s","type":"user","message":{"role":"user","content":"p%s"}}\n' "$1" "$1"; }

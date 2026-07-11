@@ -19,7 +19,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GUARD="$ROOT/home/hooks/session-budget-guard.sh"
 
 SB="$(mktemp -d)"
-cleanup() { rm -rf "$SB"; rm -f "${TMPDIR:-/tmp}"/claude-budget-*-sim* 2>/dev/null; }
+export TMPDIR="$SB/tmp"; mkdir -p "$TMPDIR"   # 本番マーカーと分離(run-tests.sh と同様)
+cleanup() { rm -rf "$SB"; }
 trap cleanup EXIT
 
 PASS=0; FAIL=0
