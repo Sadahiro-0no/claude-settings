@@ -51,13 +51,19 @@ if [ -n "$OLD_JSON" ]; then
         ($old * $new)
         | .permissions.deny  = uni($old.permissions.deny;  $new.permissions.deny)
         | .permissions.allow = uni($old.permissions.allow; $new.permissions.allow)
+        # hooks: jq の * は配列を右辺で置換するため、素マージだとユーザーの既存フックが
+        # 消える。イベント種別ごとに新旧を連結(完全重複のみ除去)して両方を残す。
+        | .hooks = (
+            (((($old.hooks // {}) | keys) + (($new.hooks // {}) | keys)) | unique) as $ks
+            | reduce $ks[] as $k ({}; .[$k] = uni($old.hooks[$k]; $new.hooks[$k]))
+          )
       ' > "$tmp" 2>/dev/null && jq -e . "$tmp" > /dev/null 2>&1; then
       mv "$tmp" "$SETTINGS"
       echo ""
       echo "settings.json を保持マージしました:"
       echo "  - 既存の env・認証設定・独自キーは維持"
-      echo "  - model / alwaysThinkingEnabled / hooks / statusLine はテンプレートの推奨値を適用"
-      echo "  - permissions.allow / deny は新旧の和集合"
+      echo "  - model / alwaysThinkingEnabled / statusLine はテンプレートの推奨値を適用"
+      echo "  - permissions.allow / deny と hooks は新旧の和集合(既存フックは保持)"
       old_model=$(printf '%s' "$OLD_JSON" | jq -r '.model // empty')
       new_model=$(jq -r '.model // empty' "$SETTINGS")
       if [ -n "$old_model" ] && [ "$old_model" != "$new_model" ]; then
