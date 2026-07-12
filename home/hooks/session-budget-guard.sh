@@ -65,8 +65,8 @@ fi
 #   - 状態が壊れている/ファイルが縮んだ(別セッション等)場合は最初から再計算
 #   - 重複排除(message.id)はチャンク内のみ。同一メッセージのusage行が
 #     チャンク境界をまたいで重複記録されるケースは実運用上ほぼ無い
-# 単価は代表値(/1M tokens): opus 5/25, haiku 1/5, その他(sonnet等) 3/15。
-# キャッシュ書込は入力の1.25倍、キャッシュ読出は0.1倍。
+# 単価は代表値(/1M tokens): fable/mythos 10/50, opus 5/25, haiku 1/5, その他(sonnet等) 3/15。
+# キャッシュ書込は入力の1.25倍(5分TTLの係数。1時間TTLでは2倍のため控えめな見積り)、読出は0.1倍。
 size=$(wc -c < "$transcript") || exit 0
 state="${TMPDIR:-/tmp}/claude-budget-state-${session}"
 
@@ -96,7 +96,8 @@ if [ "$size" -gt "$prev_off" ]; then
     head -c "$proc" "$delta" > "$delta.done"
     out=$(jq -Rrn '
       def price(m):
-        if   ((m // "") | test("opus"))  then {i: 5, o: 25}
+        if   ((m // "") | test("fable|mythos")) then {i: 10, o: 50}
+        elif ((m // "") | test("opus"))  then {i: 5, o: 25}
         elif ((m // "") | test("haiku")) then {i: 1, o: 5}
         else {i: 3, o: 15} end;
       [inputs | fromjson? // empty] as $L

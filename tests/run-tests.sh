@@ -82,6 +82,11 @@ user_line 9 > "$TR"   # ファイル縮小 → リセット
 guard_in PreToolUse $SID Read x "$TR" | bash "$GUARD" >/dev/null 2>&1
 st4=$(cat "${TMPDIR:-/tmp}/claude-budget-state-$SID" 2>/dev/null || echo "")
 case "$st4" in *" 0.0000 1 0") ok "ファイル縮小でフル再計算";; *) ng "縮小時の再計算失敗: [$st4]";; esac
+TRF="$SB/fable.jsonl"; SIDF=tst-f1
+{ user_line 1; usage_line 1 claude-fable-5 10000 0 0 2000; } > "$TRF"   # 10000*10 + 2000*50 = 200000
+guard_in PreToolUse $SIDF Read x "$TRF" | bash "$GUARD" >/dev/null 2>&1
+stf=$(cat "${TMPDIR:-/tmp}/claude-budget-state-$SIDF" 2>/dev/null || echo "")
+case "$stf" in *" 200000.0000 1 10000") ok "fable/mythos 単価(10/50)で集計(過小評価の防止)";; *) ng "fable 単価不一致: [$stf]";; esac
 
 echo "== 5. ペースガード =="
 TR="$SB/pace.jsonl"; SID=tst-p1
