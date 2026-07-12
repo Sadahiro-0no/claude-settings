@@ -157,6 +157,8 @@ Claude Code が [公式に stdin へ渡す JSON](https://code.claude.com/docs/ja
 
 予算・肥大の閾値は `~/.claude/settings.json` の env(`CLAUDE_SESSION_BUDGET_USD` / `CLAUDE_CTX_LIMIT_TOKENS` / `CLAUDE_TURN_BUDGET_USD`)に連動します。
 
+> **表示が切り替わるタイミング**: statusline は Claude Code の仕様上、**新しいアシスタントメッセージの後・`/compact` 完了後・パーミッションモード変更時・vim モード切替時**にのみ再実行されます(イベント駆動)。`/model` でのモデル切替はこれらのどれにも該当しないため、**次にプロンプトを送って応答が返るまで表示が更新されません**(statusline.sh自体の不具合ではなく、Claude Code本体の仕様)。この設定では `statusLine.refreshInterval: 5`(5秒ごとの強制再実行)を有効にしており、イベントを待たずに数秒以内に反映されます。statusline はローカル実行でAPIトークンを一切消費しないため、この設定にコスト面のデメリットはありません。
+
 ## thinking(判断根拠)のアーカイブ
 
 thinking は生成された時点で出力トークンとして課金される(display設定に関わらず不可避)。

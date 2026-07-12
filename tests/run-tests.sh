@@ -273,6 +273,8 @@ def_ctx=$(jq -r '.env.CLAUDE_CTX_LIMIT_TOKENS' "$ROOT/home/settings.json")
 for h in guard-heavy-read.sh session-budget-guard.sh handoff-notice.sh; do
   grep -q "$h" "$ROOT/home/settings.json" && ok "settings.json に $h が配線済み" || ng "$h が settings.json に無い"
 done
+ri=$(jq -r '.statusLine.refreshInterval' "$ROOT/home/settings.json")
+[ "$ri" = "5" ] && ok "statusLine.refreshInterval が設定済み(モデル切替等イベント外の変更に追随)" || ng "refreshInterval 未設定: $ri"
 
 echo ""
 echo "結果: PASS=$PASS FAIL=$FAIL"
