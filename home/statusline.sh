@@ -30,6 +30,8 @@ C_MODEL=$'\033[36m'; C_DIM=$'\033[90m'; C_STYLE=$'\033[34m'; R=$'\033[0m'
 SEP="${C_DIM} │ ${R}"
 
 get() { printf '%s' "$input" | jq -r "$1 // empty" 2>/dev/null; }
+# トークン数を k/M 表記に(例: 619619 → 620k、135000000 → 135.0M)
+fmt() { awk -v n="${1:-0}" 'BEGIN{ if(n>=1000000){printf "%.1fM",n/1000000} else if(n>=1000){printf "%.0fk",n/1000} else {printf "%d",n} }'; }
 
 # 割合(整数%)に応じた色
 pct_color() { if [ "$1" -ge 90 ]; then printf '%s' "$C_WARN"; elif [ "$1" -ge 70 ]; then printf '%s' "$C_MID"; else printf '%s' "$C_OK"; fi; }
@@ -59,7 +61,7 @@ if [ -n "$cost" ]; then
   segs+=("${emo} \$$(printf '%.2f' "$cost")/\$${BUDGET} $(make_bar "$bpct" 10) ${bpct}%")
 fi
 
-turns=""; ctx=0; cachepct=-1
+turns=""; ctx=0; cachepct=-1; t_in=0; t_rd=0; t_wr=0; t_out=0
 if [ -n "$transcript" ] && [ -f "$transcript" ]; then
   state="${TMPDIR:-/tmp}/claude-budget-state-${session}"
   if [ -n "$session" ] && [ -f "$state" ]; then
@@ -68,16 +70,20 @@ if [ -n "$transcript" ] && [ -f "$transcript" ]; then
   if [ -z "$turns" ] && [ "$(wc -c < "$transcript")" -le 2000000 ]; then
     turns=$(jq -Rn '[inputs|fromjson? // empty|select(.type=="user")|select(.isMeta!=true)|select(.toolUseResult==null)|(.message.content // empty)|if type=="string" then 1 elif type=="array" then (if any(.[]?;(.type? // "")=="tool_result") then empty else 1 end) else empty end]|length' "$transcript" 2>/dev/null) || turns=""
   fi
+  # 直近リクエストの usage から: ctx合計・キャッシュ率・内訳(新規/読出/書込/出力)
   stats=$(tail -n 100 "$transcript" 2>/dev/null | jq -Rrn '
     [inputs|fromjson? // empty|select(.message.usage!=null)|.message.usage] as $u
-    | if ($u|length)==0 then "0 -1"
+    | if ($u|length)==0 then "0 -1 0 0 0 0"
       else ($u|last) as $l
-        | (($l.input_tokens//0)+($l.cache_read_input_tokens//0)+($l.cache_creation_input_tokens//0)) as $t
-        | (if $t>0 then (($l.cache_read_input_tokens//0)*100/$t) else -1 end) as $p
-        | "\($t) \($p|floor)" end' 2>/dev/null) || stats="0 -1"
-  ctx=${stats%% *}; cachepct=${stats##* }
+        | ($l.input_tokens//0) as $in | ($l.cache_read_input_tokens//0) as $rd
+        | ($l.cache_creation_input_tokens//0) as $wr | ($l.output_tokens//0) as $out
+        | ($in+$rd+$wr) as $t
+        | (if $t>0 then ($rd*100/$t) else -1 end) as $p
+        | "\($t) \($p|floor) \($in) \($rd) \($wr) \($out)" end' 2>/dev/null) || stats="0 -1 0 0 0 0"
+  read -r ctx cachepct t_in t_rd t_wr t_out <<< "${stats:-0 -1 0 0 0 0}"
   [[ "$ctx" =~ ^[0-9]+$ ]] || ctx=0
   [[ "$cachepct" =~ ^-?[0-9]+$ ]] || cachepct=-1
+  for v in t_in t_rd t_wr t_out; do eval "[[ \"\${$v}\" =~ ^[0-9]+$ ]] || $v=0"; done
 fi
 
 # ctxバー(現在コンテキスト / 閾値)
@@ -107,6 +113,12 @@ fi
 if [[ "${cachepct:-}" =~ ^[0-9]+$ ]] && [ "$cachepct" -ge 0 ]; then
   ccol="$C_OK"; [ "$cachepct" -lt 50 ] && ccol="$C_WARN"
   segs+=("${ccol}💾 ${cachepct}%${R}")
+fi
+
+# トークン内訳(直近リクエスト): CLAUDE_STATUSLINE_TOKENS=1 のときのみ(横長になるため既定オフ)
+#   in=新規入力(フル単価) rd=キャッシュ読出(0.1倍) wr=キャッシュ書込(1.25倍) out=出力(5倍)
+if [ "${CLAUDE_STATUSLINE_TOKENS:-0}" = "1" ] && [ "${ctx:-0}" -gt 0 ]; then
+  segs+=("${C_DIM}🎫 in:$(fmt "$t_in") rd:$(fmt "$t_rd") wr:$(fmt "$t_wr") out:$(fmt "$t_out")${R}")
 fi
 
 # 出力スタイル(既定以外 = モード)
