@@ -130,7 +130,7 @@
 - 修正: `statusLine.refreshInterval: 5`(秒)を設定する。statusline はローカル実行でAPIトークンを消費しないため、コスト面のデメリットはない。
 
 ### E-1b. セッション予算ガードの不在・閾値の形骸化 [High]
-- 確認: hooks に `session-budget-guard.sh`(PreToolUse `*` + UserPromptSubmit)が配線されているか。env の `CLAUDE_SESSION_BUDGET_USD` が実態に合っているか(平均セッションコストの2〜3倍が目安。高すぎると発火せず形骸化、低すぎると日常作業が中断される)。`CLAUDE_TURN_BUDGET_USD`(目標ペース、既定 $0.10/ターン = 10ターン≒$1)も直近の実績ペース(statusline の `10T≈` 表示)と照合して較正する。`CLAUDE_CTX_LIMIT_TOKENS`(コンテキスト肥大の介入閾値、既定 12万)は statusline の `ctx:` 表示の典型値の2倍程度が目安。
+- 確認: hooks に `session-budget-guard.sh`(PreToolUse `*` + UserPromptSubmit)が配線されているか。env の `CLAUDE_SESSION_BUDGET_USD` が実態に合っているか(平均セッションコストの2〜3倍が目安。高すぎると発火せず形骸化、低すぎると日常作業が中断される)。`CLAUDE_TURN_BUDGET_USD`(目標ペース、既定 $0.10/ターン = 10ターン≒$1)も直近の実績ペース(statusline の `10T≈` 表示)と照合して較正する。`CLAUDE_CTX_LIMIT_TOKENS`(コンテキスト肥大の介入閾値、既定 12万)は statusline の `ctx:` 表示の典型値の2倍程度が目安。`CLAUDE_TURN_HARD_LIMIT`(ターン数上限、既定 10。コストと独立の第2軸)は典型セッションのターン数に対して「1タスクを畳める長さ」に較正する — 頻繁に上限で中断されるなら値を上げるか 0 で無効化し、コスト軸のみで運用する。
 - 問題: ガードがないと「気づいたら高額セッション」を止める手段がモデルの自制しかない。
 - 修正: フックを配線し、直近の `/cost` 実績から閾値を較正する。
 

@@ -19,6 +19,8 @@
 #   CLAUDE_SESSION_BUDGET_USD       セッション上限(USD)。デフォルト 5
 #   CLAUDE_SESSION_BUDGET_WARN_USD  警告閾値(USD)。デフォルトは上限の 50%
 #   CLAUDE_TURN_BUDGET_USD          目標ペース(USD/ターン)。デフォルト 0.10
+#   CLAUDE_TURN_HARD_LIMIT          ターン数上限(コストと独立の第2軸)。0/未設定で無効
+#   CLAUDE_TURN_WARN_TURNS          ターン警告閾値。デフォルトは上限-2
 #
 # 制約(README/docs 参照):
 #   - 進行中の1リクエストは止められない(検知は次のフック発火時点)
@@ -166,6 +168,31 @@ over_hard=$(awk -v c="$cost" -v h="$HARD" 'BEGIN{print (c >= h) ? 1 : 0}')
 over_warn=$(awk -v c="$cost" -v w="$WARN" 'BEGIN{print (c >= w) ? 1 : 0}')
 cost_fmt=$(awk -v c="$cost" 'BEGIN{printf "%.2f", c}')
 
+# グレースレーン判定: 上限超過中でも「引き継ぎメモの保存」だけは許可する。
+# これがないと状態を書き残す手段ごとブロックされ、作業が失われる。
+is_handoff_write() {
+  local tool fpath
+  tool=$(printf '%s' "$input" | jq -r '.tool_name // empty')
+  case "$tool" in Write|Edit) ;; *) return 1 ;; esac
+  fpath=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty')
+  case "$fpath" in
+    */.claude/handoff.md|.claude/handoff.md) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Claude 向けの終了手順(ハード上限到達時に共通)
+block_with_wrapup() { # $1 = 超過理由の1行
+  {
+    echo "$1 これ以降のツール実行はブロックされます。"
+    echo "ただし例外として .claude/handoff.md への Write/Edit だけは許可されています。次の順で終了処理をしてください:"
+    echo " 1. .claude/handoff.md に引き継ぎメモを書く(40行以内): 目的 / 完了済み / 未完了と次の一手 / 重要な決定・注意点"
+    echo " 2. ここまでの結果を簡潔に要約する"
+    echo " 3. 「/clear 後の新セッションで handoff.md から再開できる」ことをユーザーに案内する"
+  } >&2
+  exit 2
+}
+
 if [ "$over_hard" = "1" ]; then
   if [ "$event" = "UserPromptSubmit" ]; then
     # ユーザー向けメッセージ(exit 2 の stderr はユーザーに表示される)
@@ -177,29 +204,52 @@ if [ "$over_hard" = "1" ]; then
     } >&2
     exit 2
   fi
-
-  # グレースレーン: 上限超過中でも「引き継ぎメモの保存」だけは許可する。
-  # これがないと状態を書き残す手段ごとブロックされ、作業が失われる。
-  tool=$(printf '%s' "$input" | jq -r '.tool_name // empty')
-  fpath=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty')
-  case "$tool" in
-    Write|Edit)
-      case "$fpath" in
-        */.claude/handoff.md|.claude/handoff.md) exit 0 ;;
-      esac
-      ;;
-  esac
-
-  # Claude 向けメッセージ(引き継ぎメモを書かせてから終了させる)
-  {
-    echo "セッション予算超過(推定 \$${cost_fmt} / 上限 \$${HARD})。これ以降のツール実行はブロックされます。"
-    echo "ただし例外として .claude/handoff.md への Write/Edit だけは許可されています。次の順で終了処理をしてください:"
-    echo " 1. .claude/handoff.md に引き継ぎメモを書く(40行以内): 目的 / 完了済み / 未完了と次の一手 / 重要な決定・注意点"
-    echo " 2. ここまでの結果を簡潔に要約する"
-    echo " 3. 「/clear 後の新セッションで handoff.md から再開できる」ことをユーザーに案内する"
-  } >&2
-  exit 2
+  is_handoff_write && exit 0
+  block_with_wrapup "セッション予算超過(推定 \$${cost_fmt} / 上限 \$${HARD})。"
 fi
+
+# ---- ターン数ガード(コストと独立した第2の上限軸) ----------------------------
+# 「コスト上限 OR ターン数上限」のどちらか早く達した方でブロックする。
+#   CLAUDE_TURN_HARD_LIMIT  上限ターン数(0 または未設定で無効)。
+#     上限までのターン(1..N)は完走でき、N+1 ターン目のプロンプトと
+#     それ以降のツール実行がブロックされる。グレースレーンは予算ガードと共通。
+#   CLAUDE_TURN_WARN_TURNS  警告ターン(既定: 上限-2)。PreToolUse で一度だけ
+#     「残りターンで畳む」指示を注入する(急停止の防止)。
+TLIM="${CLAUDE_TURN_HARD_LIMIT:-0}"
+if [[ "$TLIM" =~ ^[0-9]+$ ]] && [ "$TLIM" -gt 0 ]; then
+  if [ "$event" = "UserPromptSubmit" ] && [ "${turns:-0}" -ge "$TLIM" ]; then
+    {
+      echo "🛑 ターン上限到達: このセッションは ${turns} ターン(上限 ${TLIM})に達しました。"
+      echo "   このセッションでの続行はブロックされています。/clear で新しいセッションを開始してください。"
+      echo "   引き継ぎメモが .claude/handoff.md に保存されていれば、新セッションが自動で検知し再開できます。"
+      echo "   上限の変更: settings.json の env CLAUDE_TURN_HARD_LIMIT(0 で無効化)"
+    } >&2
+    exit 2
+  fi
+  if [ "$event" = "PreToolUse" ] && [ "${turns:-0}" -gt "$TLIM" ]; then
+    is_handoff_write && exit 0
+    block_with_wrapup "ターン上限超過(${turns} ターン / 上限 ${TLIM})。"
+  fi
+  # 上限接近の警告(セッション1回のみ)
+  TWARN="${CLAUDE_TURN_WARN_TURNS:-$((TLIM - 2))}"
+  if [ "$event" = "PreToolUse" ] && [ "$TWARN" -gt 0 ] \
+     && [ "${turns:-0}" -ge "$TWARN" ] && [ "${turns:-0}" -le "$TLIM" ]; then
+    tmarker="${TMPDIR:-/tmp}/claude-budget-turnwarn-${session}"
+    if [ ! -f "$tmarker" ]; then
+      touch "$tmarker"
+      {
+        echo "ターン上限接近: 現在 ${turns} ターン(上限 ${TLIM}。超過すると全ツール実行がブロックされます)。"
+        echo "残りターンで作業を畳んでください:"
+        echo " - 未完了事項を洗い出し、残りターンで終えられる最小範囲に絞る"
+        echo " - 区切りで .claude/handoff.md に引き継ぎメモを更新する(上限到達後も handoff.md への書き込みだけは許可される)"
+        echo " - 続きが必要なら「/clear 後の新セッションで handoff.md から再開できる」ことをユーザーに案内する"
+        echo "この警告はセッション1回のみです。同じツール呼び出しを再実行して作業を続行してください。"
+      } >&2
+      exit 2
+    fi
+  fi
+fi
+# -----------------------------------------------------------------------------
 
 # ---- ペースガード(10ターン ≒ $1 目標) --------------------------------------
 # ターン数(=ユーザーの実プロンプト数。ツール結果・メタ行は除外)は上の差分解析で累計済み。

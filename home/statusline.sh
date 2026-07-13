@@ -91,8 +91,16 @@ if [ -n "$cost" ] && [[ "${turns:-}" =~ ^[0-9]+$ ]] && [ "$turns" -ge 1 ]; then
   if awk -v p="$pace10" -v g="$target10" 'BEGIN{exit !(p>g)}'; then segs+=("${C_WARN}🔥 10T:\$${pace10}${R}"); else segs+=("${C_OK}🎯 10T:\$${pace10}${R}"); fi
 fi
 
-# ターン数
-[[ "${turns:-}" =~ ^[0-9]+$ ]] && [ "$turns" -ge 1 ] && segs+=("${C_DIM}🔄 ${turns}${R}")
+# ターン数(CLAUDE_TURN_HARD_LIMIT 設定時は n/上限 を使用率の色で表示)
+if [[ "${turns:-}" =~ ^[0-9]+$ ]] && [ "$turns" -ge 1 ]; then
+  TLIM="${CLAUDE_TURN_HARD_LIMIT:-0}"
+  if [[ "$TLIM" =~ ^[0-9]+$ ]] && [ "$TLIM" -gt 0 ]; then
+    tpct=$(( turns * 100 / TLIM ))
+    segs+=("$(pct_color "$tpct")🔄 ${turns}/${TLIM}${R}")
+  else
+    segs+=("${C_DIM}🔄 ${turns}${R}")
+  fi
+fi
 
 # キャッシュ読出率
 if [ "$cachepct" -ge 0 ]; then
