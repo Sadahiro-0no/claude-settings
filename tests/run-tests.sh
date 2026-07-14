@@ -24,6 +24,11 @@ SB="$(mktemp -d)"
 # 警告マーカー(セッション非依存の共通マーカー含む)がすべてここに入るため、
 # 本番セッションのマーカーを汚染せず、テスト間の残留干渉も起きない。
 export TMPDIR="$SB/tmp"; mkdir -p "$TMPDIR"
+# CLAUDE_CONFIG_DIR もサンドボックスへ隔離する。handoff-notice の本体更新検知は
+# フィンガープリントを $CLAUDE_CONFIG_DIR/.claude-code-fingerprint に保存するため、
+# 隔離しないと本番 $HOME/.claude の古い値との差分で「更新通知」が紛れ込み、
+# handoff テストがフレーキーになる(section 13 は自前の CFG を明示指定して上書き)。
+export CLAUDE_CONFIG_DIR="$SB/cfghome"; mkdir -p "$CLAUDE_CONFIG_DIR"
 cleanup() { rm -rf "$SB"; }
 trap cleanup EXIT
 
@@ -87,6 +92,26 @@ TRF="$SB/fable.jsonl"; SIDF=tst-f1
 guard_in PreToolUse $SIDF Read x "$TRF" | bash "$GUARD" >/dev/null 2>&1
 stf=$(cat "${TMPDIR:-/tmp}/claude-budget-state-$SIDF" 2>/dev/null || echo "")
 case "$stf" in *" 200000.0000 1 10000") ok "fable/mythos 単価(10/50)で集計(過小評価の防止)";; *) ng "fable 単価不一致: [$stf]";; esac
+
+# ターン数の合成エントリ除外(「2ターンが4に見える」バグの回帰防止)。
+# 実プロンプト2件のあいだに、スラッシュコマンドの足場・標準出力・継続サマリ・
+# サブエージェント内部ターンを挟んでも、ターン数は 2 のままであること。
+TRT="$SB/turncount.jsonl"; SIDT=tst-tc1
+{
+  user_line 1; usage_line 1 claude-sonnet-5 1000 0 0 500
+  printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":"<command-name>/model</command-name>\\n<command-args>opus</command-args>"}}\n'
+  printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":"<local-command-stdout>Set model to claude-opus-4-8</local-command-stdout>"}}\n'
+  printf '{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from a previous conversation..."}}\n'
+  printf '{"type":"user","isSidechain":true,"message":{"role":"user","content":"サブエージェント内部の指示"}}\n'
+  user_line 2; usage_line 2 claude-sonnet-5 1000 0 0 500
+} > "$TRT"
+guard_in PreToolUse $SIDT Read x "$TRT" | bash "$GUARD" >/dev/null 2>&1
+stt=$(awk '{print $3}' "${TMPDIR:-/tmp}/claude-budget-state-$SIDT" 2>/dev/null || echo "")
+[ "$stt" = "2" ] && ok "合成エントリ(コマンド/stdout/継続サマリ/sidechain)を除外しターン数=2" || ng "ターン数が過大計上: $stt(期待 2)"
+# statusline も同じ除外ロジックであること(状態ファイルを消して自前集計に落とす)
+rm -f "${TMPDIR:-/tmp}/claude-budget-state-$SIDT"
+slt=$(printf '{"model":{"display_name":"S"},"session_id":"%s","transcript_path":"%s","cost":{"total_cost_usd":0.1}}' "$SIDT" "$TRT" | bash "$STATUS" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+case "$slt" in *"🔄 2"*) ok "statusline のフォールバック集計も合成エントリを除外";; *) ng "statusline のターン数が不正: [$slt]";; esac
 
 echo "== 5. ペースガード =="
 TR="$SB/pace.jsonl"; SID=tst-p1

@@ -61,7 +61,7 @@ if [ -n "$session" ] && [ -f "$state" ]; then
   turns=$(awk '{print $3}' "$state" 2>/dev/null || true); [[ "${turns:-}" =~ ^[0-9]+$ ]] || turns=""
 fi
 if [ -z "$turns" ] && [ -n "$transcript" ] && [ -f "$transcript" ] && [ "$(wc -c < "$transcript")" -le 2000000 ]; then
-  turns=$(jq -Rn '[inputs|fromjson? // empty|select(.type=="user")|select(.isMeta!=true)|select(.toolUseResult==null)|(.message.content // empty)|if type=="string" then 1 elif type=="array" then (if any(.[]?;(.type? // "")=="tool_result") then empty else 1 end) else empty end]|length' "$transcript" 2>/dev/null) || turns=""
+  turns=$(jq -Rn '[inputs|fromjson? // empty|select(.type=="user")|select(.isMeta!=true)|select(.isSidechain!=true)|select(.isCompactSummary!=true)|select(.toolUseResult==null)|(.message.content // empty)|if type=="string" then (if test("^<command-|^<local-command|^This session is being continued") then empty else 1 end) elif type=="array" then (if any(.[]?;(.type? // "")=="tool_result") then empty else 1 end) else empty end]|length' "$transcript" 2>/dev/null) || turns=""
 fi
 
 # 各セグメントに「行グループ」を付けて格納する。

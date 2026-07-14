@@ -117,9 +117,15 @@ if [ "$size" -gt "$prev_off" ]; then
       | ([ $L[]
           | select(.type == "user")
           | select(.isMeta != true)
+          | select(.isSidechain != true)      # サブエージェント内部の user ターンを除外
+          | select(.isCompactSummary != true) # /compact・継続サマリの合成 user を除外
           | select(.toolUseResult == null)
           | (.message.content // empty)
-          | if type == "string" then 1
+          # 文字列内容でも、スラッシュコマンドの足場(<command-*>)とその標準出力
+          # (<local-command-*>)、継続サマリ本文は「ユーザーの実プロンプト」ではない。
+          # これらを数えると 1操作=command+stdout の2重計上になる(ターン数が倍増する主因)。
+          | if type == "string" then
+              (if test("^<command-|^<local-command|^This session is being continued") then empty else 1 end)
             elif type == "array" then
               (if any(.[]?; (.type? // "") == "tool_result") then empty else 1 end)
             else empty end
@@ -252,7 +258,8 @@ fi
 # -----------------------------------------------------------------------------
 
 # ---- ペースガード(10ターン ≒ $1 目標) --------------------------------------
-# ターン数(=ユーザーの実プロンプト数。ツール結果・メタ行は除外)は上の差分解析で累計済み。
+# ターン数(=ユーザーの実プロンプト数。ツール結果・メタ・sidechain・コマンド足場や
+# その標準出力・継続サマリは除外)は上の差分解析で累計済み。
 TURNB="${CLAUDE_TURN_BUDGET_USD:-0.10}"
 
 # 立ち上がりのノイズを避けるため3ターン目から判定。許容額 = (ターン数+1) × ペース
