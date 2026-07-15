@@ -257,6 +257,26 @@ os3=$(jq -r '.outputStyle // "ABSENT"' "$DO3/settings.json")
 DO4="$SB/ostyle4"; mkstyle "$DO4" "default"
 o4=$(CLAUDE_CONFIG_DIR="$DO4" bash "$INSTALL" < /dev/null 2>&1)
 case "$o4" in *"outputStyle"*) ng "既定スタイルなのにレビュー行が出た";; *) ok "既定スタイルはレビュー対象外(不要な警告なし)";; esac
+# 冪等性: 同一結果の再実行はスキップ(再書き込み・再バックアップ・冗長メッセージを出さない)
+DID="$SB/idem"; mkdir -p "$DID"
+printf '{"model":"opus","env":{"K":"v"}}' > "$DID/settings.json"
+CLAUDE_CONFIG_DIR="$DID" bash "$INSTALL" >/dev/null 2>&1         # 1回目(マージ)
+md5a=$(md5sum "$DID/settings.json" | awk '{print $1}')
+nb1=$(ls -d "$DID"/backup-* 2>/dev/null | wc -l | tr -d ' ')
+sleep 1   # backup-<TS> は秒粒度。2回目で新規 backup が作られたかを確実に判定するため
+o5=$(CLAUDE_CONFIG_DIR="$DID" bash "$INSTALL" 2>&1)              # 2回目(変更なしのはず)
+md5b=$(md5sum "$DID/settings.json" | awk '{print $1}')
+nb2=$(ls -d "$DID"/backup-* 2>/dev/null | wc -l | tr -d ' ')
+case "$o5" in *"変更なし"*"スキップ"*) ok "2回目: settings.json が変更なしでスキップ";; *) ng "変更なしにならない: [$o5]";; esac
+[ "$md5a" = "$md5b" ] && ok "変更なし時は settings.json を書き換えない(md5一致)" || ng "no-op で書き換わった"
+[ "$nb2" = "$nb1" ] && ok "変更なし時は追加バックアップを作らない($nb1→$nb2)" || ng "no-op で backup が増えた($nb1→$nb2)"
+case "$o5" in *"更新 0"*) ok "2回目: 非settingsファイルも全て『変更なし』でスキップ";; *) ng "スキップ集計が不正: [$o5]";; esac
+# 差分があるときは従来どおりマージして退避する(スキップの副作用で更新が止まらないこと)
+printf '{"model":"opus","env":{"K":"v","NEW":"z"}}' > "$DID/settings.json"   # env を1つ増やす
+o6=$(CLAUDE_CONFIG_DIR="$DID" bash "$INSTALL" 2>&1)
+nz=$(jq -r '.env.NEW' "$DID/settings.json")
+[ "$nz" = "z" ] && ok "差分あり: 既存の新規 env を保持してマージ" || ng "差分マージで env 喪失"
+case "$o6" in *"保持マージしました"*) ok "差分あり時は従来どおりマージメッセージを表示";; *) ng "差分ありでマージされない: [$o6]";; esac
 
 echo "== 9. トークン見積り(日本語) =="
 printf 'これは日本語のテストです。' > "$SB/jp.txt"
