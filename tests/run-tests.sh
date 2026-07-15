@@ -483,9 +483,23 @@ printf '{"hook_event_name":"SessionEnd","reason":"clear","cwd":"%s","transcript_
 # 無効化フラグ
 se_in clear | CLAUDE_HANDOFF_AUTOSTUB=0 bash "$STUB"
 [ ! -f "$SF" ] && ok "CLAUDE_HANDOFF_AUTOSTUB=0 で無効化" || ng "無効化が効かない"
+# 精度向上: git リポジトリなら「作業中ファイル(git status)」と「直近コミット」を収録する
+WG="$SB/gitstubproj"; mkdir -p "$WG/.claude"
+( cd "$WG" && git init -q && git config user.email t@t && git config user.name t \
+  && echo base > tracked.txt && git add tracked.txt && git commit -qm "seed: 初期コミット" \
+  && echo edit >> tracked.txt && echo new > untracked.txt ) >/dev/null 2>&1
+printf '{"hook_event_name":"SessionEnd","reason":"clear","cwd":"%s","transcript_path":"%s","session_id":"tst-git1"}' "$WG" "$TRS" | bash "$STUB"
+GF="$WG/.claude/handoff-tstgit1.md"
+grep -q "作業中のファイル" "$GF" 2>/dev/null && grep -q "untracked.txt" "$GF" 2>/dev/null && ok "スタブに未コミットの作業中ファイル(git status)を収録" || ng "git status セクション欠落"
+grep -q "直近のコミット" "$GF" 2>/dev/null && grep -q "初期コミット" "$GF" 2>/dev/null && ok "スタブに直近コミット(直前に確定した成果)を収録" || ng "直近コミット欠落"
+# git 管理外のプロジェクトでは git セクションを出さない(壊れず素通し)
+rm -f "$WP/.claude/"handoff*.md; se_in clear | bash "$STUB"
+grep -q "作業中のファイル" "$SF" 2>/dev/null && ng "非gitプロジェクトに git セクションが混入" || ok "非gitプロジェクトでは git セクションを出さない"
 HOFF="$ROOT/home/skills/handoff/SKILL.md"
 [ -f "$HOFF" ] && grep -q '^name: handoff$' "$HOFF" && ok "/handoff スキル(半自動・モデル品質の引き継ぎ)が存在" || ng "/handoff スキル不備"
 grep -q '40行以内' "$HOFF" && ok "handoff スキルにサイズ上限(40行)を明記" || ng "サイズ上限なし"
+grep -q '次の一手' "$HOFF" && grep -q '現在地' "$HOFF" && ok "handoff スキルが精度要素(次の一手/現在地)を要求" || ng "精度要素が未定義"
+grep -q '現在地' "$NOTICE" && ok "notice が再開前のスナップショット照合(現在地/git status)を指示" || ng "notice に照合指示がない"
 
 echo "== 22. handoff アーカイブ(履歴・並行タスク → .claude/notes/) =="
 ARCH="$ROOT/home/hooks/handoff-archive.sh"

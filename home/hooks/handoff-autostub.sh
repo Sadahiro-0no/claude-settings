@@ -3,8 +3,12 @@
 #
 # 制約(公式仕様): SessionEnd はモデルを呼べず、既定タイムアウト1.5秒。
 # したがってモデル品質の要約は書けない。代わりに決定論的な「スタブ」を書く:
-#   日時 / 作業ディレクトリ / gitブランチ / 直近のユーザープロンプト(最大5件)/
-#   元トランスクリプトのパス(ディスクに残るため、詳細は必要時に部分検索で復元可能)
+#   日時 / 作業ディレクトリ / gitブランチ / 作業中ファイル(git status)/ 直近コミット /
+#   直近のユーザープロンプト(最大5件)/ 元トランスクリプトのパス(ディスクに残るため、
+#   詳細は必要時に部分検索で復元可能)。
+# 精度向上の要点: git の作業ツリー状態(未コミットの変更ファイルと直近コミット)を
+# 含めることで、再開側は「どのファイルを触っていて、直前に何を確定したか」を
+# プロンプト履歴に頼らず即座に把握できる(復元の当て推量を減らす)。
 #
 # 設計判断:
 #   - モデル(claude -p)をここから呼ぶのは反パターン(G-3): /clear の度に課金され、
@@ -56,8 +60,13 @@ if [ -f "$shared" ] && [ "${CLAUDE_HANDOFF_ARCHIVE:-0}" = "1" ] \
   bash "$(dirname "$0")/handoff-archive.sh" "$cwd" >/dev/null 2>&1 || true
 fi
 
-branch=""
-command -v git >/dev/null 2>&1 && branch=$(git -C "$cwd" branch --show-current 2>/dev/null || true)
+branch=""; gitstat=""; gitlog=""
+if command -v git >/dev/null 2>&1 && git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
+  branch=$(git -C "$cwd" branch --show-current 2>/dev/null || true)
+  # 作業中(未コミット)のファイルと直近コミット。上位のみで 1.5 秒制限内に確実に終える。
+  gitstat=$(git -C "$cwd" status --short 2>/dev/null | head -20)
+  gitlog=$(git -C "$cwd" log --oneline -3 2>/dev/null)
+fi
 
 prompts=""
 if [ -n "$transcript" ] && [ -f "$transcript" ]; then
@@ -80,6 +89,18 @@ fi
   echo "- ディレクトリ: $cwd"
   [ -n "$branch" ] && echo "- ブランチ: $branch"
   echo ""
+  if [ -n "$gitstat" ]; then
+    echo "## 作業中のファイル(未コミット / git status)"
+    echo '```'
+    echo "$gitstat"
+    echo '```'
+    echo ""
+  fi
+  if [ -n "$gitlog" ]; then
+    echo "## 直近のコミット(直前に確定した成果)"
+    echo "$gitlog" | sed 's/^/- /'
+    echo ""
+  fi
   echo "## 直近の依頼(新しいものが下)"
   if [ -n "$prompts" ]; then echo "$prompts"; else echo "- (取得できず)"; fi
   echo ""
