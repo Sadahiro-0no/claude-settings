@@ -220,43 +220,62 @@ cat > "$D/settings.json" <<'EOF'
 {"model":"opus","env":{"MY_VAR":"keep"},"apiKeyHelper":"/bin/k.sh","permissions":{"deny":["Read(./mine/**)"],"allow":["Bash(make:*)"]},"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"~/my-own-hook.sh"}]}],"Notification":[{"hooks":[{"type":"command","command":"~/notify.sh"}]}]}}
 EOF
 CLAUDE_CONFIG_DIR="$D" bash "$INSTALL" >/dev/null 2>&1
-m=$(jq -r '.model' "$D/settings.json"); [ "$m" = "sonnet" ] && ok "model をテンプレ値に更新" || ng "model=$m"
+# 既定(keep): あなたの既存 model は勝手に下位/古い参照へ差し替えない(維持)
+m=$(jq -r '.model' "$D/settings.json"); [ "$m" = "opus" ] && ok "既存 model を維持(勝手に上書きしない)" || ng "model が上書きされた: $m"
 v=$(jq -r '.env.MY_VAR' "$D/settings.json"); [ "$v" = "keep" ] && ok "既存 env を保持" || ng "env 喪失"
 uh=$(jq -r '[.hooks.PreToolUse[].hooks[].command] | index("~/my-own-hook.sh")' "$D/settings.json")
 [ "$uh" != "null" ] && ok "既存 PreToolUse フックを保持(消えない)" || ng "既存フックが消えた"
 th=$(jq -r '[.hooks.PreToolUse[].hooks[].command] | any(test("session-budget-guard"))' "$D/settings.json")
-[ "$th" = "true" ] && ok "テンプレのガードフックも追加" || ng "ガードフックが入らない"
+[ "$th" = "true" ] && ok "テンプレのガードフックも追加(守りは足し込む)" || ng "ガードフックが入らない"
+sl=$(jq -r '.statusLine.command // empty' "$D/settings.json")
+case "$sl" in *statusline.sh*) ok "未設定だったキー(statusLine)はテンプレが補完" ;; *) ng "不足キーが補完されない: $sl" ;; esac
 nh=$(jq -r '.hooks.Notification[0].hooks[0].command' "$D/settings.json")
 [ "$nh" = "~/notify.sh" ] && ok "テンプレに無いイベント(Notification)も保持" || ng "Notification フック喪失"
 k=$(jq -r '.apiKeyHelper' "$D/settings.json"); [ "$k" = "/bin/k.sh" ] && ok "独自キーを保持" || ng "独自キー喪失"
 d=$(jq -r '.permissions.deny | index("Read(./mine/**)")' "$D/settings.json"); [ "$d" != "null" ] && ok "deny を和集合" || ng "deny 喪失"
+# PREFER=template のときだけ、積極的にテンプレ推奨(model=sonnet)へ寄せる
+DT="$SB/claudehome-tpl"; mkdir -p "$DT"
+printf '{"model":"opus","env":{"MY_VAR":"keep"}}' > "$DT/settings.json"
+CLAUDE_INSTALL_PREFER=template CLAUDE_CONFIG_DIR="$DT" bash "$INSTALL" >/dev/null 2>&1
+mt=$(jq -r '.model' "$DT/settings.json"); [ "$mt" = "sonnet" ] && ok "PREFER=template で model をテンプレ推奨(sonnet)へ" || ng "template 指定で model=$mt"
+vt=$(jq -r '.env.MY_VAR' "$DT/settings.json"); [ "$vt" = "keep" ] && ok "PREFER=template でも独自 env は保持" || ng "template で独自 env 喪失"
 
-# コスト影響設定(outputStyle)の相違レビュー: テンプレートが既定に委ねるキーは黙認しない。
-# 既存に非既定 outputStyle を持つ設定を用意し、3つの解決方針を検証する。
+# outputStyle レビュー: 出力トークンを増やす公式スタイル(Explanatory/Learning)だけ対象。
+# terse・独自スタイルは節約になり得るので絶対に触らない(ユーザー報告の terse 上書き対策)。
 mkstyle() { # dest-dir value
   mkdir -p "$1"
   printf '{"model":"opus","outputStyle":"%s","env":{"E":"1"}}' "$2" > "$1/settings.json"
 }
-# (a) 非対話・PREFER 未指定 → 既定 keep(破壊しない)+ 警告を明示表示
+# ★ terse(簡潔=節約系)は keep 既定でも PREFER=template でも維持し、警告も出さない
+DOT="$SB/ostyleterse"; mkstyle "$DOT" "terse"
+ot=$(CLAUDE_CONFIG_DIR="$DOT" bash "$INSTALL" < /dev/null 2>&1)
+ost=$(jq -r '.outputStyle // "ABSENT"' "$DOT/settings.json")
+[ "$ost" = "terse" ] && ok "terse スタイルは維持(節約系を壊さない)" || ng "terse が失われた: $ost"
+case "$ot" in *冗長系*) ng "terse に不要な警告/変更が出た: [$ot]";; *) ok "terse には警告を出さない(触らない)";; esac
+DOT2="$SB/ostyleterse2"; mkstyle "$DOT2" "terse"
+CLAUDE_INSTALL_PREFER=template CLAUDE_CONFIG_DIR="$DOT2" bash "$INSTALL" >/dev/null 2>&1
+ost2=$(jq -r '.outputStyle // "ABSENT"' "$DOT2/settings.json")
+[ "$ost2" = "terse" ] && ok "PREFER=template でも terse は解除しない(冗長系のみ対象)" || ng "template で terse が消えた: $ost2"
+# (a) Explanatory(冗長系)・非対話 keep 既定 → 維持 + 警告
 DO1="$SB/ostyle1"; mkstyle "$DO1" "Explanatory"
 o1=$(CLAUDE_CONFIG_DIR="$DO1" bash "$INSTALL" < /dev/null 2>&1)
 os1=$(jq -r '.outputStyle // "ABSENT"' "$DO1/settings.json")
-[ "$os1" = "Explanatory" ] && ok "outputStyle: 非対話既定は既存を維持(破壊しない)" || ng "既定で outputStyle が失われた: $os1"
-case "$o1" in *"outputStyle"*"維持"*) ok "維持時は黙認せず警告を表示(見直し方法つき)";; *) ng "維持の警告が出ていない";; esac
-# (b) CLAUDE_INSTALL_PREFER=template → 標準スタイルへリセット(キー削除)
+[ "$os1" = "Explanatory" ] && ok "outputStyle: 冗長系も既定は維持(破壊しない)" || ng "既定で outputStyle が失われた: $os1"
+case "$o1" in *"outputStyle"*"維持"*) ok "冗長系維持時は節約提案を表示";; *) ng "維持の警告が出ていない: [$o1]";; esac
+# (b) CLAUDE_INSTALL_PREFER=template → 冗長系を標準へリセット(キー削除)
 DO2="$SB/ostyle2"; mkstyle "$DO2" "Explanatory"
 CLAUDE_INSTALL_PREFER=template CLAUDE_CONFIG_DIR="$DO2" bash "$INSTALL" >/dev/null 2>&1
 os2=$(jq -r '.outputStyle // "ABSENT"' "$DO2/settings.json")
-[ "$os2" = "ABSENT" ] && ok "PREFER=template で outputStyle を標準へリセット" || ng "template 指定でリセットされない: $os2"
-# (c) CLAUDE_INSTALL_PREFER=keep → 明示的に既存を維持
+[ "$os2" = "ABSENT" ] && ok "PREFER=template で冗長系 outputStyle を標準へリセット" || ng "template 指定でリセットされない: $os2"
+# (c) Learning・keep → 維持
 DO3="$SB/ostyle3"; mkstyle "$DO3" "Learning"
 CLAUDE_INSTALL_PREFER=keep CLAUDE_CONFIG_DIR="$DO3" bash "$INSTALL" >/dev/null 2>&1
 os3=$(jq -r '.outputStyle // "ABSENT"' "$DO3/settings.json")
-[ "$os3" = "Learning" ] && ok "PREFER=keep で既存 outputStyle を維持" || ng "keep 指定で維持されない: $os3"
-# 既定(default)スタイルは相違なし扱い → レビュー対象外(ノイズを出さない)
+[ "$os3" = "Learning" ] && ok "PREFER=keep で冗長系 outputStyle も維持" || ng "keep 指定で維持されない: $os3"
+# 既定(default)スタイルはレビュー対象外(ノイズを出さない)
 DO4="$SB/ostyle4"; mkstyle "$DO4" "default"
 o4=$(CLAUDE_CONFIG_DIR="$DO4" bash "$INSTALL" < /dev/null 2>&1)
-case "$o4" in *"outputStyle"*) ng "既定スタイルなのにレビュー行が出た";; *) ok "既定スタイルはレビュー対象外(不要な警告なし)";; esac
+case "$o4" in *冗長系*) ng "既定スタイルなのにレビュー行が出た";; *) ok "既定スタイルはレビュー対象外(不要な警告なし)";; esac
 # 冪等性: 同一結果の再実行はスキップ(再書き込み・再バックアップ・冗長メッセージを出さない)
 DID="$SB/idem"; mkdir -p "$DID"
 printf '{"model":"opus","env":{"K":"v"}}' > "$DID/settings.json"
@@ -271,22 +290,23 @@ case "$o5" in *"変更なし"*"スキップ"*) ok "2回目: settings.json が変
 [ "$md5a" = "$md5b" ] && ok "変更なし時は settings.json を書き換えない(md5一致)" || ng "no-op で書き換わった"
 [ "$nb2" = "$nb1" ] && ok "変更なし時は追加バックアップを作らない($nb1→$nb2)" || ng "no-op で backup が増えた($nb1→$nb2)"
 case "$o5" in *"更新 0"*) ok "2回目: 非settingsファイルも全て『変更なし』でスキップ";; *) ng "スキップ集計が不正: [$o5]";; esac
-# 差分があるときは従来どおりマージして退避する(スキップの副作用で更新が止まらないこと)
+# 差分があるときはマージして退避する(スキップの副作用で更新が止まらないこと)
 printf '{"model":"opus","env":{"K":"v","NEW":"z"}}' > "$DID/settings.json"   # env を1つ増やす
 o6=$(CLAUDE_CONFIG_DIR="$DID" bash "$INSTALL" 2>&1)
 nz=$(jq -r '.env.NEW' "$DID/settings.json")
 [ "$nz" = "z" ] && ok "差分あり: 既存の新規 env を保持してマージ" || ng "差分マージで env 喪失"
-case "$o6" in *"保持マージしました"*) ok "差分あり時は従来どおりマージメッセージを表示";; *) ng "差分ありでマージされない: [$o6]";; esac
-# 項目ごとの diff: 既存値がテンプレ推奨値で上書きされたキーを old→new で1件ずつ明示する
+case "$o6" in *"マージしました"*) ok "差分あり時はマージメッセージを表示";; *) ng "差分ありでマージされない: [$o6]";; esac
+# 項目ごとの diff: 既定 keep では「既存を維持(推奨X)」で食い違いを明示し、黙って上書きしない
 DKV="$SB/keydiff"; mkdir -p "$DKV"
 printf '{"model":"opus","alwaysThinkingEnabled":true,"env":{"CLAUDE_SESSION_BUDGET_USD":"20","MY_OWN":"keep"}}' > "$DKV/settings.json"
 o7=$(CLAUDE_CONFIG_DIR="$DKV" bash "$INSTALL" 2>&1)
-case "$o7" in *'~ model: "opus" → "sonnet"'*) ok "項目diff: model の上書きを old→new で明示";; *) ng "model の項目diffが出ない: [$o7]";; esac
-case "$o7" in *'~ env.CLAUDE_SESSION_BUDGET_USD: "20" → "5"'*) ok "項目diff: コスト関連 env の上書きを明示(黙って消えない)";; *) ng "env budget の項目diffが出ない: [$o7]";; esac
-case "$o7" in *"alwaysThinkingEnabled: true → false"*) ok "項目diff: thinking の上書きを明示";; *) ng "thinking の項目diffが出ない: [$o7]";; esac
-case "$o7" in *"件 新規追加"*) ok "項目diff: 新規追加キーは件数で要約(上書きと区別)";; *) ng "追加の要約が出ない: [$o7]";; esac
+case "$o7" in *'model: 既存 "opus" を維持(テンプレ推奨: "sonnet")'*) ok "項目diff: model は維持しつつ推奨を併記(黙って上書きしない)";; *) ng "model の維持diffが出ない: [$o7]";; esac
+case "$o7" in *'env.CLAUDE_SESSION_BUDGET_USD: 既存 "20" を維持(テンプレ推奨: "5")'*) ok "項目diff: コスト関連 env も既存維持+推奨併記";; *) ng "env budget の維持diffが出ない: [$o7]";; esac
+mb2=$(jq -r '.env.CLAUDE_SESSION_BUDGET_USD' "$DKV/settings.json"); [ "$mb2" = "20" ] && ok "既存の予算 env を実際に維持(20 のまま)" || ng "予算 env が上書きされた: $mb2"
+mm=$(jq -r '.model' "$DKV/settings.json"); [ "$mm" = "opus" ] && ok "既存 model を実際に維持(opus のまま)" || ng "model が上書きされた: $mm"
+case "$o7" in *"件 追加"*) ok "項目diff: 追加キーは件数で要約(維持と区別)";; *) ng "追加の要約が出ない: [$o7]";; esac
 mo=$(jq -r '.env.MY_OWN' "$DKV/settings.json"); [ "$mo" = "keep" ] && ok "独自 env(MY_OWN)は維持され diff にも出ない" || ng "独自 env が失われた"
-case "$o7" in *"MY_OWN"*) ng "維持された独自キーが誤って diff に出た";; *) ok "維持キーは項目diff に出さない(変更点だけ表示)";; esac
+case "$o7" in *"MY_OWN"*) ng "維持された独自キーが誤って diff に出た";; *) ok "維持キーは項目diff に出さない(食い違いだけ表示)";; esac
 
 echo "== 9. トークン見積り(日本語) =="
 printf 'これは日本語のテストです。' > "$SB/jp.txt"
