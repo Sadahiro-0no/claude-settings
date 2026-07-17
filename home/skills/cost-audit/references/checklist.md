@@ -105,7 +105,7 @@
 
 ### D-2. 出力の冗長性を抑えるルールがない [Medium]
 - 確認: CLAUDE.md に「結論先行・変更箇所のみ提示・全文再掲禁止」があるか
-- 修正: グローバル CLAUDE.md に3行で記載(本リポジトリの `home/CLAUDE.md` 参照)。
+- 修正: グローバル CLAUDE.md に3行で記載(本リポジトリの `home/rules/cost-optimization.md` 参照)。
 
 ### D-2b. 出力スタイル・追加システムプロンプトの常駐コスト [Medium]
 - 確認: 有効な出力スタイル(`/output-style`、settings の `outputStyle`)と `--append-system-prompt` の内容。スタイル本文は**有効な間、毎リクエストのシステムプロンプトに常駐**する。

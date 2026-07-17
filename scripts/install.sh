@@ -61,7 +61,9 @@ fi
 #       ・不一致/記録なし(=あなたが編集 or 由来不明)      → 上書きせず保持し、
 #         テンプレ新版を <file>.claude-settings-new に置く(あなたの版を壊さない)
 #   - CLAUDE_INSTALL_FORCE=1 で従来どおり一括上書き(退避あり)
-# settings.json・CLAUDE.md はそれぞれ専用のマージで扱うのでここでは対象外。
+# settings.json は専用マージで扱うのでここでは対象外。CLAUDE.md は**一切触らない**
+# (グローバル方針は home/rules/cost-optimization.md = ~/.claude/rules/ に置き、
+#  マニフェスト方式で管理する。あなたの CLAUDE.md は自由記述領域として不干渉)。
 MANIFEST="$DST/.claude-settings-manifest"
 NEWMANIFEST="$(mktemp)"
 FORCE="${CLAUDE_INSTALL_FORCE:-0}"
@@ -76,7 +78,7 @@ count=0; updated=0; skipped=0; preserved=0; preserved_list=""
 while IFS= read -r -d '' f; do
   rel="${f#"$SRC"/}"
   dest="$DST/$rel"
-  { [ "$rel" = "settings.json" ] || [ "$rel" = "CLAUDE.md" ]; } && continue
+  [ "$rel" = "settings.json" ] && continue
   count=$((count + 1))
   newhash="$(hashof "$f")"
   if [ ! -e "$dest" ]; then
@@ -106,67 +108,39 @@ mv "$NEWMANIFEST" "$MANIFEST" 2>/dev/null || rm -f "$NEWMANIFEST"
 chmod +x "$DST/statusline.sh" 2>/dev/null || true
 find "$DST/hooks" "$DST/skills" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 
-echo "導入完了: 更新 ${updated} / 変更なし ${skipped} / 保持 ${preserved}(settings.json・CLAUDE.md を除く計 ${count} files)→ $DST"
+echo "導入完了: 更新 ${updated} / 変更なし ${skipped} / 保持 ${preserved}(settings.json を除く計 ${count} files)→ $DST"
 if [ "$preserved" -gt 0 ]; then
   echo "  あなたが編集した(と思われる)ファイルは上書きせず保持しました。テンプレ新版は各 <file>.claude-settings-new に置いています:"
   for p in $preserved_list; do echo "    - $p (新版: ${p}.claude-settings-new)"; done
   echo "  差分を確認して、更新したいものだけ new を反映してください(全部テンプレに合わせるなら CLAUDE_INSTALL_FORCE=1 で再実行)。"
 fi
 
-# ---- CLAUDE.md: 管理ブロック方式で更新(あなたの記述を絶対に消さない)---------------
-# CLAUDE.md はユーザーのグローバルメモリ(自由記述)。**いかなる場合も既存の記述を
-# 削除・全置換しない。** テンプレのコスト方針を BEGIN/END マーカーで囲んだ管理ブロック
-# として扱い、次のいずれかだけを行う:
-#   - 既存にマーカーあり            → マーカー間だけ最新テンプレへ差し替え(ブロック外は不変)
-#   - マーカー無し & 現行テンプレと完全一致(=追記ゼロ) → マーカーで囲むだけ(内容不変)
-#   - それ以外(マーカー無しで内容が違う=あなたの追記/独自記述あり)
-#                                   → 1行も消さず、管理ブロックを末尾に追加するだけ
-# ※ かつて存在した「見出しが一致したら全置換して移行」する分岐は、追記を消す不具合の
-#    原因だったため撤去した。全置換は「現行テンプレと完全一致」のときのみ(=情報損失ゼロ)。
-# 同一結果ならスキップ。差分があるときだけ退避してから書き込む。
+# ---- CLAUDE.md からの移行: グローバル方針を rules/ へ移し、CLAUDE.md は触らない --------
+# 方針は ~/.claude/rules/cost-optimization.md(上のマニフェスト方式で管理)に置くように
+# なった。CLAUDE.md はもう一切書き込まない(あなたの自由記述領域)。
+# 旧版が CLAUDE.md へ埋め込んだ「管理ブロック」が残っている場合だけ、それを除去して
+# 二重ロード(=方針が rules と CLAUDE.md の両方に載って常駐トークンが二重)を解消する。
+# 除去はブロック内(BEGIN〜END)だけで、ブロック外のあなたの記述は1行も消さない。
+# 両マーカーが揃っているときのみ実施(破損時は触らない=安全側)。
 CLAUDE_MD_BEGIN='<!-- >>> claude-settings managed (トークン倹約グローバル方針・自動更新) >>> -->'
 CLAUDE_MD_END='<!-- <<< claude-settings managed <<< -->'
-merge_claude_md() {
-  local tpl="$SRC/CLAUDE.md" dst="$DST/CLAUDE.md" newf mode
-  [ -f "$tpl" ] || return 0
-  if [ ! -f "$dst" ]; then
-    { printf '%s\n' "$CLAUDE_MD_BEGIN"; cat "$tpl"; printf '%s\n' "$CLAUDE_MD_END"; } > "$dst"
-    echo "CLAUDE.md を新規配置しました(コスト方針を管理ブロックとして)。"
-    return 0
-  fi
-  # update は BEGIN と END の**両方**が揃っているときだけ。片方だけ(マーカー破損)なら
-  # ブロック範囲が確定できず awk が末尾を巻き込んで消しかねないので、安全側の append にする。
-  if grep -qF "$CLAUDE_MD_BEGIN" "$dst" && grep -qF "$CLAUDE_MD_END" "$dst"; then mode=update
-  elif cmp -s "$tpl" "$dst"; then mode=wrap         # 現行テンプレと完全一致 → 追記ゼロなので安全に囲む
-  else mode=append; fi                              # 追記/独自記述あり・マーカー破損 → 消さずに末尾追加のみ
+strip_old_managed_block() {
+  local dst="$DST/CLAUDE.md" newf
+  [ -f "$dst" ] || return 0
+  grep -qF "$CLAUDE_MD_BEGIN" "$dst" && grep -qF "$CLAUDE_MD_END" "$dst" || return 0
   newf=$(mktemp)
-  case "$mode" in
-    update)
-      awk -v b="$CLAUDE_MD_BEGIN" -v e="$CLAUDE_MD_END" -v tf="$tpl" '
-        $0==b { print; while((getline l < tf) > 0) print l; close(tf); skip=1; next }
-        $0==e { skip=0; print; next }
-        skip==1 { next }
-        { print }
-      ' "$dst" > "$newf" ;;
-    wrap)
-      { printf '%s\n' "$CLAUDE_MD_BEGIN"; cat "$tpl"; printf '%s\n' "$CLAUDE_MD_END"; } > "$newf" ;;
-    append)
-      { cat "$dst"; printf '\n%s\n' "$CLAUDE_MD_BEGIN"; cat "$tpl"; printf '%s\n' "$CLAUDE_MD_END"; } > "$newf" ;;
-  esac
-  if cmp -s "$newf" "$dst"; then
-    rm -f "$newf"
-    echo "CLAUDE.md: 変更なし。スキップしました。"
-  else
-    mkdir -p "$BK"; cp -p "$dst" "$BK/CLAUDE.md" 2>/dev/null || true
-    mv "$newf" "$dst"
-    case "$mode" in
-      update)  echo "CLAUDE.md: 管理ブロックのみ最新化しました(ブロック外のあなたの記述は保持)。" ;;
-      wrap)    echo "CLAUDE.md: コスト方針を管理ブロックで囲みました(内容は不変)。" ;;
-      append)  echo "CLAUDE.md: あなたの既存内容は1行も消さず、コスト方針を管理ブロックとして末尾に追加しました(重複する旧記述があれば手動で削除できます)。" ;;
-    esac
-  fi
+  awk -v b="$CLAUDE_MD_BEGIN" -v e="$CLAUDE_MD_END" '
+    $0==b { skip=1; next }
+    $0==e { skip=0; next }
+    skip==1 { next }
+    { print }
+  ' "$dst" > "$newf"
+  if cmp -s "$newf" "$dst"; then rm -f "$newf"; return 0; fi
+  mkdir -p "$BK"; cp -p "$dst" "$BK/CLAUDE.md" 2>/dev/null || true
+  mv "$newf" "$dst"
+  echo "CLAUDE.md: 旧・埋め込み管理ブロックを除去しました(コスト方針は ~/.claude/rules/cost-optimization.md へ移行済み。ブロック外のあなたの記述は保持)。"
 }
-merge_claude_md
+strip_old_managed_block
 # -----------------------------------------------------------------------------
 
 # ---- マージ方針(コンフリクトの勝敗)------------------------------------------

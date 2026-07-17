@@ -341,47 +341,37 @@ d2m=$(jq -r '.model' "$DDEC2/settings.json"); d2b=$(jq -r '.env.CLAUDE_SESSION_B
 SMG="$ROOT/home/skills/settings-merge/SKILL.md"
 [ -f "$SMG" ] && grep -q '^name: settings-merge$' "$SMG" && ok "/settings-merge スキルが存在" || ng "/settings-merge スキル不備"
 grep -q 'AskUserQuestion' "$SMG" && grep -q 'CLAUDE_INSTALL_PLAN' "$SMG" && grep -q 'CLAUDE_INSTALL_DECISIONS' "$SMG" && ok "スキルが plan→AskUserQuestion→decisions の流れを規定" || ng "スキルの対話マージ手順が不備"
-# CLAUDE.md は丸ごと上書きしない(ユーザーのグローバルメモリ)。管理ブロック方式で更新する。
-# (1) ユーザー独自 CLAUDE.md は保持し、管理ブロックを末尾に追加(上書きしない)
+# グローバル方針は ~/.claude/rules/ に置き、ユーザーの CLAUDE.md は一切触らない。
+# (1) 方針は rules/cost-optimization.md として配置され、CLAUDE.md は作られない
 DCM="$SB/claudemd"; mkdir -p "$DCM"
-printf '# 自分ルール\n- 常にテストを書く\n- デプロイ前に確認\n' > "$DCM/CLAUDE.md"
-ocm=$(CLAUDE_CONFIG_DIR="$DCM" bash "$INSTALL" </dev/null 2>&1)
-grep -q "自分ルール" "$DCM/CLAUDE.md" && grep -q "常にテストを書く" "$DCM/CLAUDE.md" && ok "CLAUDE.md: ユーザー独自の記述を保持(丸ごと上書きしない)" || ng "CLAUDE.md のユーザー記述が失われた"
-grep -qF "claude-settings managed" "$DCM/CLAUDE.md" && ok "CLAUDE.md: コスト方針を管理ブロックとして追加" || ng "管理ブロックが追加されない"
-case "$ocm" in *"CLAUDE.md"*"末尾に追加"*) ok "CLAUDE.md: 上書きではなく追加した旨を通知" ;; *) ng "CLAUDE.md の通知が不正: [$ocm]" ;; esac
-# (2) 冪等: 2回目は変更なし
-ocm2=$(CLAUDE_CONFIG_DIR="$DCM" bash "$INSTALL" </dev/null 2>&1)
-case "$ocm2" in *"CLAUDE.md: 変更なし"*) ok "CLAUDE.md: 同一なら再書き込みしない(冪等)" ;; *) ng "CLAUDE.md 冪等でない: [$ocm2]" ;; esac
-# (3) 管理ブロック更新: ブロック外のユーザー追記は保持しつつ、ブロック内だけ最新へ復元
-printf '\n## ブロック外メモ\n- foo\n' >> "$DCM/CLAUDE.md"
-sed -i.bak 's/^# グローバル方針(トークン倹約)/# 改ざん見出し/' "$DCM/CLAUDE.md" 2>/dev/null || sed -i '' 's/^# グローバル方針(トークン倹約)/# 改ざん見出し/' "$DCM/CLAUDE.md"
-rm -f "$DCM/CLAUDE.md.bak"
 CLAUDE_CONFIG_DIR="$DCM" bash "$INSTALL" </dev/null >/dev/null 2>&1
-grep -q "ブロック外メモ" "$DCM/CLAUDE.md" && ok "CLAUDE.md: 管理ブロック外の追記は保持" || ng "ブロック外の追記が消えた"
-grep -q "^# グローバル方針(トークン倹約)" "$DCM/CLAUDE.md" && ok "CLAUDE.md: 管理ブロック内は最新テンプレへ復元" || ng "ブロック内が復元されない"
-# (4) マーカー無し & 現行テンプレと完全一致(追記ゼロ)→ 囲むだけ(重複しない)
-DCM2="$SB/claudemd2"; mkdir -p "$DCM2"
-cp "$ROOT/home/CLAUDE.md" "$DCM2/CLAUDE.md"
-CLAUDE_CONFIG_DIR="$DCM2" bash "$INSTALL" </dev/null >/dev/null 2>&1
-grep -qF "claude-settings managed" "$DCM2/CLAUDE.md" && ok "CLAUDE.md: テンプレ完全一致(追記無)は管理ブロックで囲む" || ng "囲まれない"
-hc=$(grep -c "^# グローバル方針(トークン倹約)" "$DCM2/CLAUDE.md"); [ "$hc" = "1" ] && ok "CLAUDE.md: 囲み時に方針が重複しない(見出し1つ)" || ng "重複した(見出し $hc 個)"
-# (5) ★再発防止★ テンプレ由来(マーカー無)+ ユーザー追記 → 追記を1行も消さない
-DCM3="$SB/claudemd3"; mkdir -p "$DCM3"
-cp "$ROOT/home/CLAUDE.md" "$DCM3/CLAUDE.md"
-printf '\n## 自分の独自ルール\n- 秘密の設定X\n- プロジェクト固有Y\n' >> "$DCM3/CLAUDE.md"
-CLAUDE_CONFIG_DIR="$DCM3" bash "$INSTALL" </dev/null >/dev/null 2>&1
-{ grep -q "秘密の設定X" "$DCM3/CLAUDE.md" && grep -q "プロジェクト固有Y" "$DCM3/CLAUDE.md" && grep -q "自分の独自ルール" "$DCM3/CLAUDE.md"; } && ok "CLAUDE.md: テンプレ由来+追記でも、あなたの追記を1行も消さない(再発防止)" || ng "★再発★ 追記が消えた"
-grep -qF "claude-settings managed" "$DCM3/CLAUDE.md" && ok "CLAUDE.md: 追記を保持しつつ管理ブロックを追加" || ng "管理ブロックが入らない"
-# 2回目は冪等(追記も維持)
-CLAUDE_CONFIG_DIR="$DCM3" bash "$INSTALL" </dev/null >/dev/null 2>&1
-grep -q "秘密の設定X" "$DCM3/CLAUDE.md" && ok "CLAUDE.md: 再実行しても追記が維持される(冪等)" || ng "再実行で追記が消えた"
-# (6) マーカー破損(END欠落)でも巻き込み削除しない(update は両マーカー必須)
-DCM4="$SB/claudemd4"; mkdir -p "$DCM4"
-CLAUDE_CONFIG_DIR="$DCM4" bash "$INSTALL" </dev/null >/dev/null 2>&1   # 正常な管理ブロック生成
-printf '\n## 末尾の独自メモ\n- 大事な情報Z\n' >> "$DCM4/CLAUDE.md"    # ブロック外に追記
-grep -v 'claude-settings managed <<<' "$DCM4/CLAUDE.md" > "$DCM4/.c2" && mv "$DCM4/.c2" "$DCM4/CLAUDE.md"  # END だけ削除=破損
-CLAUDE_CONFIG_DIR="$DCM4" bash "$INSTALL" </dev/null >/dev/null 2>&1
-grep -q "大事な情報Z" "$DCM4/CLAUDE.md" && ok "CLAUDE.md: マーカー破損(片側欠落)でも既存を巻き込み削除しない" || ng "★データ損失★ 破損マーカーで末尾が消えた"
+grep -q 'トークン倹約' "$DCM/rules/cost-optimization.md" 2>/dev/null && ok "方針: ~/.claude/rules/cost-optimization.md として配置" || ng "rules に方針が入らない"
+[ ! -f "$DCM/CLAUDE.md" ] && ok "CLAUDE.md: 存在しなければ作らない(不干渉)" || ng "CLAUDE.md を勝手に作った"
+# (2) ユーザーの CLAUDE.md があっても一切触らない(丸ごと保持)
+DCM1="$SB/claudemd1"; mkdir -p "$DCM1"
+printf '# 自分ルール\n- 常にテストを書く\n- 独自メモX\n' > "$DCM1/CLAUDE.md"
+before1=$(md5sum "$DCM1/CLAUDE.md" | awk '{print $1}')
+CLAUDE_CONFIG_DIR="$DCM1" bash "$INSTALL" </dev/null >/dev/null 2>&1
+after1=$(md5sum "$DCM1/CLAUDE.md" | awk '{print $1}')
+[ "$before1" = "$after1" ] && ok "CLAUDE.md: 既存があっても1バイトも変更しない(不干渉)" || ng "CLAUDE.md が変更された"
+grep -q "独自メモX" "$DCM1/CLAUDE.md" && ok "CLAUDE.md: ユーザー記述はそのまま" || ng "ユーザー記述が失われた"
+grep -qF "claude-settings managed" "$DCM1/CLAUDE.md" && ng "CLAUDE.md に管理ブロックが埋め込まれた(旧挙動)" || ok "CLAUDE.md に管理ブロックを埋め込まない(方針は rules/ へ)"
+# (3) rules の方針は manifest 方式: ユーザーが編集したら上書きせず保持
+printf '\n<!-- 自分の追記R -->\n' >> "$DCM/rules/cost-optimization.md"
+CLAUDE_CONFIG_DIR="$DCM" bash "$INSTALL" </dev/null >/dev/null 2>&1
+grep -q "自分の追記R" "$DCM/rules/cost-optimization.md" && ok "rules: 編集した方針ファイルは上書きせず保持(manifest)" || ng "編集した rules が上書きされた"
+# (4) 移行: 旧・埋め込み管理ブロックがあれば除去(ブロック外の記述は保持・二重ロード解消)
+DCMX="$SB/claudemdx"; mkdir -p "$DCMX"
+{ printf '# 自分のメモ\n- 残す情報Z\n\n'; printf '%s\n' '<!-- >>> claude-settings managed (トークン倹約グローバル方針・自動更新) >>> -->'; echo '# グローバル方針(トークン倹約)'; echo '- 旧埋め込み本文'; printf '%s\n' '<!-- <<< claude-settings managed <<< -->'; } > "$DCMX/CLAUDE.md"
+omx=$(CLAUDE_CONFIG_DIR="$DCMX" bash "$INSTALL" </dev/null 2>&1)
+grep -q "残す情報Z" "$DCMX/CLAUDE.md" && ok "移行: 埋め込みブロック外のユーザー記述は保持" || ng "★データ損失★ 移行で記述が消えた"
+grep -qF "claude-settings managed" "$DCMX/CLAUDE.md" && ng "移行後も埋め込みブロックが残っている" || ok "移行: 旧・埋め込みブロックを除去(二重ロード解消)"
+case "$omx" in *"旧・埋め込み管理ブロックを除去"*) ok "移行: 除去した旨を通知" ;; *) ng "移行通知が出ない: [$omx]" ;; esac
+# (5) 移行は片方マーカーだけ(破損)なら実施しない(巻き込み削除の防止)
+DCMY="$SB/claudemdy"; mkdir -p "$DCMY"
+{ printf '# メモ\n- 情報W\n'; printf '%s\n' '<!-- >>> claude-settings managed (トークン倹約グローバル方針・自動更新) >>> -->'; echo '本文だけEND無し'; } > "$DCMY/CLAUDE.md"
+CLAUDE_CONFIG_DIR="$DCMY" bash "$INSTALL" </dev/null >/dev/null 2>&1
+{ grep -q "情報W" "$DCMY/CLAUDE.md" && grep -q "本文だけEND無し" "$DCMY/CLAUDE.md"; } && ok "移行: マーカー破損(片側)では触らない(巻き込み削除しない)" || ng "★データ損失★ 破損マーカーで消えた"
 # マニフェスト方式: あなたが編集した statusline/hooks/skills を上書きしない
 DMAN="$SB/manifest"; mkdir -p "$DMAN"
 CLAUDE_CONFIG_DIR="$DMAN" bash "$INSTALL" </dev/null >/dev/null 2>&1     # 初回配置(manifest 作成)
@@ -550,13 +540,13 @@ grep -q '^name: refine$' "$REFINE" && ok "frontmatter name: refine" || ng "front
 grep -q '^description: .*refine' "$REFINE" && ok "description に発火条件(refine)を含む" || ng "description 不備"
 grep -q '完了条件' "$REFINE" && grep -q '要確認' "$REFINE" && ok "仕様テンプレート(完了条件・要確認)を含む" || ng "仕様テンプレート欠落"
 grep -q 'ファイル探索をしない' "$REFINE" && ok "整形段階の探索禁止ルールを含む" || ng "探索禁止ルール欠落"
-grep -q '## 依頼の受け方' "$ROOT/home/CLAUDE.md" && ok "CLAUDE.md に確認ファースト規範(依頼の受け方)" || ng "CLAUDE.md に確認ファースト規範がない"
-grep -q '確認質問を1つだけ' "$ROOT/home/CLAUDE.md" && ok "確認は1問だけの制約を明記(質問攻めの防止)" || ng "確認1問の制約なし"
+grep -q '## 依頼の受け方' "$ROOT/home/rules/cost-optimization.md" && ok "CLAUDE.md に確認ファースト規範(依頼の受け方)" || ng "CLAUDE.md に確認ファースト規範がない"
+grep -q '確認質問を1つだけ' "$ROOT/home/rules/cost-optimization.md" && ok "確認は1問だけの制約を明記(質問攻めの防止)" || ng "確認1問の制約なし"
 grep -q '^### C-7\.' "$CHECK" && ok "checklist に C-7(手戻りループ)" || ng "checklist に C-7 がない"
 grep -q 'C-7' "$CMAP" && ok "coverage-map が C-7 を参照" || ng "coverage-map に C-7 参照がない"
 grep -q '/refine' "$RM" && grep -q '手戻りの削減' "$RM" && ok "README にレバー7(手戻り削減)の記載" || ng "README にレバー7の記載がない"
 # 常駐コストの回帰防止: 規範追加後も CLAUDE.md が肥大化していないこと
-tok=$(bash "$EST" "$ROOT/home/CLAUDE.md" | awk 'NR==2{print $4}')
+tok=$(bash "$EST" "$ROOT/home/rules/cost-optimization.md" | awk 'NR==2{print $4}')
 [ "$tok" -lt 1000 ] 2>/dev/null && ok "グローバル CLAUDE.md の常駐コストが 1000 トークン未満($tok)" || ng "CLAUDE.md が肥大化: $tok トークン"
 
 echo "== 18. ターン数ガード(コストと独立した第2の上限軸) =="
@@ -717,13 +707,13 @@ grep -q '^name: handoff$' "$HOFF" && grep -q 'handoff-archive.sh' "$HOFF" && ok 
 grep -q 'notes/' "$ROOT/project-template/.gitignore" && ok "project-template の .gitignore が notes/ を既定除外" || ng ".gitignore に notes/ がない"
 
 echo "== 23. モデル/effort 過剰検知の規範(双方向)=="
-grep -q '過剰側の提案は控えめに' "$ROOT/home/CLAUDE.md" && ok "CLAUDE.md に過剰検知(下位提案・控えめ)の規範がある" || ng "過剰検知の規範がない"
-grep -q '切替はユーザー操作が必要' "$ROOT/home/CLAUDE.md" && ok "規範が「提案のみ・実切替はユーザー操作」の限界を明記" || ng "限界の明記がない"
-tok2=$(bash "$EST" "$ROOT/home/CLAUDE.md" | awk 'NR==2{print $4}')
+grep -q '過剰側の提案は控えめに' "$ROOT/home/rules/cost-optimization.md" && ok "CLAUDE.md に過剰検知(下位提案・控えめ)の規範がある" || ng "過剰検知の規範がない"
+grep -q '切替はユーザー操作が必要' "$ROOT/home/rules/cost-optimization.md" && ok "規範が「提案のみ・実切替はユーザー操作」の限界を明記" || ng "限界の明記がない"
+tok2=$(bash "$EST" "$ROOT/home/rules/cost-optimization.md" | awk 'NR==2{print $4}')
 [ "$tok2" -lt 1000 ] 2>/dev/null && ok "規範追加後も CLAUDE.md が1000トークン未満($tok2)" || ng "CLAUDE.md が肥大化: $tok2 トークン"
 grep -q '双方向' "$ROOT/docs/cost-optimization.md" && ok "docs にモデル規範が双方向である旨を記載" || ng "docs に双方向の記載がない"
 grep -q 'launch-effort pin' "$ROOT/docs/cost-optimization.md" && ok "docs が effort 固定(変更不可)ケースに言及" || ng "effort 固定への言及がない"
-grep -q 'セッション一度きり' "$ROOT/home/CLAUDE.md" && ok "CLAUDE.md の下位提案がナグ防止(一度きり)に制約" || ng "ナグ防止の制約がない"
+grep -q 'セッション一度きり' "$ROOT/home/rules/cost-optimization.md" && ok "CLAUDE.md の下位提案がナグ防止(一度きり)に制約" || ng "ナグ防止の制約がない"
 
 echo "== 24. 1日合計コスト(セッション横断・/clear でズレない) =="
 today=$(date +%Y%m%d); ddir="$CLAUDE_CONFIG_DIR/cost-daily"
