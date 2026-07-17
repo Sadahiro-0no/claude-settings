@@ -141,6 +141,21 @@ strip_old_managed_block() {
   echo "CLAUDE.md: 旧・埋め込み管理ブロックを除去しました(コスト方針は ~/.claude/rules/cost-optimization.md へ移行済み。ブロック外のあなたの記述は保持)。"
 }
 strip_old_managed_block
+
+# 初期の install はマーカー無しで CLAUDE.md へ方針を素コピーしていた。その残骸は
+# あなたの記述と機械的に区別できないため**自動削除しない**が、rules/ と二重ロードに
+# なるので、気づけるよう案内だけ出す(削除は手動)。
+notice_inline_policy_leftover() {
+  local dst="$DST/CLAUDE.md"
+  [ -f "$dst" ] || return 0
+  grep -qF "$CLAUDE_MD_BEGIN" "$dst" && return 0      # マーカー版は strip 済み
+  grep -q '^# グローバル方針(トークン倹約)' "$dst" || return 0
+  echo "CLAUDE.md に旧バージョンのコスト方針(マーカー無し)が残っているようです。"
+  echo "  方針は ~/.claude/rules/cost-optimization.md へ移行済みなので、二重ロード(常駐トークン二重計上)を"
+  echo "  避けるには CLAUDE.md 側の「# グローバル方針(トークン倹約)」以下の該当部分を手動で削除してください。"
+  echo "  あなたの独自記述と区別できないため、自動削除はしていません(誤削除を避けるため)。"
+}
+notice_inline_policy_leftover
 # -----------------------------------------------------------------------------
 
 # ---- マージ方針(コンフリクトの勝敗)------------------------------------------

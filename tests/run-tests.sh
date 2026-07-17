@@ -372,6 +372,14 @@ DCMY="$SB/claudemdy"; mkdir -p "$DCMY"
 { printf '# メモ\n- 情報W\n'; printf '%s\n' '<!-- >>> claude-settings managed (トークン倹約グローバル方針・自動更新) >>> -->'; echo '本文だけEND無し'; } > "$DCMY/CLAUDE.md"
 CLAUDE_CONFIG_DIR="$DCMY" bash "$INSTALL" </dev/null >/dev/null 2>&1
 { grep -q "情報W" "$DCMY/CLAUDE.md" && grep -q "本文だけEND無し" "$DCMY/CLAUDE.md"; } && ok "移行: マーカー破損(片側)では触らない(巻き込み削除しない)" || ng "★データ損失★ 破損マーカーで消えた"
+# (6) マーカー無しの旧方針素コピー → 自動削除せず案内のみ(誤削除防止・二重ロードは通知)
+DCMZ="$SB/claudemdz"; mkdir -p "$DCMZ"
+cp "$ROOT/home/rules/cost-optimization.md" "$DCMZ/CLAUDE.md"; printf '\n## 追記M\n' >> "$DCMZ/CLAUDE.md"
+bz=$(md5sum "$DCMZ/CLAUDE.md" | awk '{print $1}')
+omz=$(CLAUDE_CONFIG_DIR="$DCMZ" bash "$INSTALL" </dev/null 2>&1)
+az=$(md5sum "$DCMZ/CLAUDE.md" | awk '{print $1}')
+[ "$bz" = "$az" ] && ok "移行: マーカー無しの旧方針は自動削除しない(あなたの記述と区別不能なため)" || ng "★誤削除★ マーカー無し旧方針を勝手に消した"
+case "$omz" in *"旧バージョンのコスト方針"*) ok "移行: マーカー無し旧方針の残存を案内(手動削除を促す)" ;; *) ng "残存の案内が出ない: [$omz]" ;; esac
 # マニフェスト方式: あなたが編集した statusline/hooks/skills を上書きしない
 DMAN="$SB/manifest"; mkdir -p "$DMAN"
 CLAUDE_CONFIG_DIR="$DMAN" bash "$INSTALL" </dev/null >/dev/null 2>&1     # 初回配置(manifest 作成)
