@@ -372,14 +372,22 @@ DCMY="$SB/claudemdy"; mkdir -p "$DCMY"
 { printf '# メモ\n- 情報W\n'; printf '%s\n' '<!-- >>> claude-settings managed (トークン倹約グローバル方針・自動更新) >>> -->'; echo '本文だけEND無し'; } > "$DCMY/CLAUDE.md"
 CLAUDE_CONFIG_DIR="$DCMY" bash "$INSTALL" </dev/null >/dev/null 2>&1
 { grep -q "情報W" "$DCMY/CLAUDE.md" && grep -q "本文だけEND無し" "$DCMY/CLAUDE.md"; } && ok "移行: マーカー破損(片側)では触らない(巻き込み削除しない)" || ng "★データ損失★ 破損マーカーで消えた"
-# (6) マーカー無しの旧方針素コピー → 自動削除せず案内のみ(誤削除防止・二重ロードは通知)
+# (6) マーカー無しでも、テンプレ本文と完全一致する旧方針は自動除去(追記は保持)
 DCMZ="$SB/claudemdz"; mkdir -p "$DCMZ"
-cp "$ROOT/home/rules/cost-optimization.md" "$DCMZ/CLAUDE.md"; printf '\n## 追記M\n' >> "$DCMZ/CLAUDE.md"
-bz=$(md5sum "$DCMZ/CLAUDE.md" | awk '{print $1}')
+cp "$ROOT/home/rules/cost-optimization.md" "$DCMZ/CLAUDE.md"; printf '\n## 追記M\n- 大事Z\n' >> "$DCMZ/CLAUDE.md"
 omz=$(CLAUDE_CONFIG_DIR="$DCMZ" bash "$INSTALL" </dev/null 2>&1)
-az=$(md5sum "$DCMZ/CLAUDE.md" | awk '{print $1}')
-[ "$bz" = "$az" ] && ok "移行: マーカー無しの旧方針は自動削除しない(あなたの記述と区別不能なため)" || ng "★誤削除★ マーカー無し旧方針を勝手に消した"
-case "$omz" in *"旧バージョンのコスト方針"*) ok "移行: マーカー無し旧方針の残存を案内(手動削除を促す)" ;; *) ng "残存の案内が出ない: [$omz]" ;; esac
+grep -q "^# グローバル方針(トークン倹約)" "$DCMZ/CLAUDE.md" && ng "★残存★ 完全一致の旧方針が消えていない" || ok "移行: テンプレ完全一致の旧方針(探索・出力等)を自動除去"
+{ grep -q "追記M" "$DCMZ/CLAUDE.md" && grep -q "大事Z" "$DCMZ/CLAUDE.md"; } && ok "移行: 旧方針除去でもあなたの追記は保持" || ng "★データ損失★ 追記が消えた"
+case "$omz" in *"完全一致する箇所"*"除去"*) ok "移行: 除去した旨を通知" ;; *) ng "除去通知が出ない: [$omz]" ;; esac
+# (7) 手編集で完全一致しない旧方針 → 自動削除せず案内のみ(誤削除防止)
+DCMW="$SB/claudemdw"; mkdir -p "$DCMW"
+cp "$ROOT/home/rules/cost-optimization.md" "$DCMW/CLAUDE.md"
+sed -i.bak 's/^## 出力$/## 出力(自分で追記)/' "$DCMW/CLAUDE.md" 2>/dev/null || sed -i '' 's/^## 出力$/## 出力(自分で追記)/' "$DCMW/CLAUDE.md"; rm -f "$DCMW/CLAUDE.md.bak"
+bw=$(md5sum "$DCMW/CLAUDE.md" | awk '{print $1}')
+omw=$(CLAUDE_CONFIG_DIR="$DCMW" bash "$INSTALL" </dev/null 2>&1)
+aw=$(md5sum "$DCMW/CLAUDE.md" | awk '{print $1}')
+[ "$bw" = "$aw" ] && ok "移行: 手編集で完全一致しない旧方針は自動削除しない(誤削除防止)" || ng "★誤削除★ 手編集版を勝手に消した"
+case "$omw" in *"手編集あり"*) ok "移行: 完全一致しない場合は手動削除を案内" ;; *) ng "案内が出ない: [$omw]" ;; esac
 # マニフェスト方式: あなたが編集した statusline/hooks/skills を上書きしない
 DMAN="$SB/manifest"; mkdir -p "$DMAN"
 CLAUDE_CONFIG_DIR="$DMAN" bash "$INSTALL" </dev/null >/dev/null 2>&1     # 初回配置(manifest 作成)

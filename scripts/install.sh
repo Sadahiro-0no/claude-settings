@@ -142,20 +142,49 @@ strip_old_managed_block() {
 }
 strip_old_managed_block
 
-# 初期の install はマーカー無しで CLAUDE.md へ方針を素コピーしていた。その残骸は
-# あなたの記述と機械的に区別できないため**自動削除しない**が、rules/ と二重ロードに
-# なるので、気づけるよう案内だけ出す(削除は手動)。
+# 初期の install はマーカー無しで CLAUDE.md へ方針を素コピーしていた。その残骸(探索・
+# 出力などの節)は rules/ と二重ロードになるので除去したい。ただし誤削除は厳禁なので、
+# **現行テンプレ本文と完全一致する連続ブロックのときだけ**除去する(=自分が書いた方針の
+# 逐語コピーだけにマッチ。あなたの独自記述は1文字でも違えばマッチせず絶対に消えない)。
+# 完全一致しない(=版ズレ or 手編集あり)ときは案内だけ出して手動削除に委ねる。
+strip_inline_policy_exact() {
+  local dst="$DST/CLAUDE.md" tpl="$SRC/rules/cost-optimization.md" newf
+  [ -f "$dst" ] && [ -f "$tpl" ] || return 1
+  grep -qF "$CLAUDE_MD_BEGIN" "$dst" && return 1       # マーカー版は strip 済み
+  grep -q '^# グローバル方針(トークン倹約)' "$dst" || return 1
+  newf=$(mktemp)
+  # tpl の全行が dst 内に連続一致する箇所を探し、そこだけ落とす(他は不変)。
+  awk '
+    NR==FNR { tpl[FNR]=$0; tn=FNR; next }
+    { line[FNR]=$0; ln=FNR }
+    END {
+      ms=0
+      if (tn>0) for (i=1; i<=ln-tn+1; i++) {
+        ok=1
+        for (j=1; j<=tn; j++) if (line[i+j-1] != tpl[j]) { ok=0; break }
+        if (ok) { ms=i; break }
+      }
+      for (i=1; i<=ln; i++) { if (ms>0 && i>=ms && i<ms+tn) continue; print line[i] }
+    }
+  ' "$tpl" "$dst" > "$newf"
+  if cmp -s "$newf" "$dst"; then rm -f "$newf"; return 1; fi   # 完全一致なし → 変更せず
+  mkdir -p "$BK"; cp -p "$dst" "$BK/CLAUDE.md" 2>/dev/null || true
+  mv "$newf" "$dst"
+  echo "CLAUDE.md: 旧バージョンのコスト方針(テンプレ本文と完全一致する箇所)を除去しました(方針は ~/.claude/rules/cost-optimization.md へ移行済み。あなたの記述は1文字も変更していません)。"
+  return 0
+}
+# 完全一致しなかった(版ズレ/手編集)場合の案内(自動削除しない=誤削除防止)。
 notice_inline_policy_leftover() {
   local dst="$DST/CLAUDE.md"
   [ -f "$dst" ] || return 0
-  grep -qF "$CLAUDE_MD_BEGIN" "$dst" && return 0      # マーカー版は strip 済み
+  grep -qF "$CLAUDE_MD_BEGIN" "$dst" && return 0
   grep -q '^# グローバル方針(トークン倹約)' "$dst" || return 0
-  echo "CLAUDE.md に旧バージョンのコスト方針(マーカー無し)が残っているようです。"
-  echo "  方針は ~/.claude/rules/cost-optimization.md へ移行済みなので、二重ロード(常駐トークン二重計上)を"
-  echo "  避けるには CLAUDE.md 側の「# グローバル方針(トークン倹約)」以下の該当部分を手動で削除してください。"
-  echo "  あなたの独自記述と区別できないため、自動削除はしていません(誤削除を避けるため)。"
+  echo "CLAUDE.md に旧バージョンのコスト方針(テンプレと少し異なる=手編集あり?)が残っているようです。"
+  echo "  方針は ~/.claude/rules/cost-optimization.md へ移行済みです。二重ロードを避けるには、"
+  echo "  CLAUDE.md 側の「# グローバル方針(トークン倹約)」以下の該当部分を手動で削除してください。"
+  echo "  完全一致しない=あなたの手が入っている可能性があるため、自動削除はしていません(誤削除防止)。"
 }
-notice_inline_policy_leftover
+strip_inline_policy_exact || notice_inline_policy_leftover
 # -----------------------------------------------------------------------------
 
 # ---- マージ方針(コンフリクトの勝敗)------------------------------------------
