@@ -113,12 +113,16 @@ if [ "$preserved" -gt 0 ]; then
   echo "  差分を確認して、更新したいものだけ new を反映してください(全部テンプレに合わせるなら CLAUDE_INSTALL_FORCE=1 で再実行)。"
 fi
 
-# ---- CLAUDE.md: 管理ブロック方式で更新(あなたの記述を保持)-----------------------
-# CLAUDE.md はユーザーのグローバルメモリ(自由記述)なので、丸ごと上書きしない。
-# テンプレのコスト方針を BEGIN/END マーカーで囲んだ「管理ブロック」として扱い:
-#   - 既存にマーカーがある      → その中身だけ最新テンプレへ差し替え(ブロック外は保持)
-#   - マーカー無しだが旧テンプレ  → マーカー付きへ移行(以後は差分更新)
-#   - ユーザー独自の CLAUDE.md   → 内容を保持し、管理ブロックを末尾に追加(上書きしない)
+# ---- CLAUDE.md: 管理ブロック方式で更新(あなたの記述を絶対に消さない)---------------
+# CLAUDE.md はユーザーのグローバルメモリ(自由記述)。**いかなる場合も既存の記述を
+# 削除・全置換しない。** テンプレのコスト方針を BEGIN/END マーカーで囲んだ管理ブロック
+# として扱い、次のいずれかだけを行う:
+#   - 既存にマーカーあり            → マーカー間だけ最新テンプレへ差し替え(ブロック外は不変)
+#   - マーカー無し & 現行テンプレと完全一致(=追記ゼロ) → マーカーで囲むだけ(内容不変)
+#   - それ以外(マーカー無しで内容が違う=あなたの追記/独自記述あり)
+#                                   → 1行も消さず、管理ブロックを末尾に追加するだけ
+# ※ かつて存在した「見出しが一致したら全置換して移行」する分岐は、追記を消す不具合の
+#    原因だったため撤去した。全置換は「現行テンプレと完全一致」のときのみ(=情報損失ゼロ)。
 # 同一結果ならスキップ。差分があるときだけ退避してから書き込む。
 CLAUDE_MD_BEGIN='<!-- >>> claude-settings managed (トークン倹約グローバル方針・自動更新) >>> -->'
 CLAUDE_MD_END='<!-- <<< claude-settings managed <<< -->'
@@ -131,8 +135,8 @@ merge_claude_md() {
     return 0
   fi
   if grep -qF "$CLAUDE_MD_BEGIN" "$dst"; then mode=update
-  elif head -n 20 "$dst" | grep -q '^# グローバル方針(トークン倹約)'; then mode=migrate
-  else mode=append; fi
+  elif cmp -s "$tpl" "$dst"; then mode=wrap         # 現行テンプレと完全一致 → 追記ゼロなので安全に囲む
+  else mode=append; fi                              # 追記/独自記述あり → 消さずに末尾追加のみ
   newf=$(mktemp)
   case "$mode" in
     update)
@@ -142,7 +146,7 @@ merge_claude_md() {
         skip==1 { next }
         { print }
       ' "$dst" > "$newf" ;;
-    migrate)
+    wrap)
       { printf '%s\n' "$CLAUDE_MD_BEGIN"; cat "$tpl"; printf '%s\n' "$CLAUDE_MD_END"; } > "$newf" ;;
     append)
       { cat "$dst"; printf '\n%s\n' "$CLAUDE_MD_BEGIN"; cat "$tpl"; printf '%s\n' "$CLAUDE_MD_END"; } > "$newf" ;;
@@ -155,8 +159,8 @@ merge_claude_md() {
     mv "$newf" "$dst"
     case "$mode" in
       update)  echo "CLAUDE.md: 管理ブロックのみ最新化しました(ブロック外のあなたの記述は保持)。" ;;
-      migrate) echo "CLAUDE.md: 旧テンプレを管理ブロックへ移行しました(以後は差分のみ更新)。" ;;
-      append)  echo "CLAUDE.md: あなたの既存内容を保持し、コスト方針を管理ブロックとして末尾に追加しました(不要なら該当ブロックを削除)。" ;;
+      wrap)    echo "CLAUDE.md: コスト方針を管理ブロックで囲みました(内容は不変)。" ;;
+      append)  echo "CLAUDE.md: あなたの既存内容は1行も消さず、コスト方針を管理ブロックとして末尾に追加しました(重複する旧記述があれば手動で削除できます)。" ;;
     esac
   fi
 }

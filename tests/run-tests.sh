@@ -359,12 +359,22 @@ rm -f "$DCM/CLAUDE.md.bak"
 CLAUDE_CONFIG_DIR="$DCM" bash "$INSTALL" </dev/null >/dev/null 2>&1
 grep -q "ブロック外メモ" "$DCM/CLAUDE.md" && ok "CLAUDE.md: 管理ブロック外の追記は保持" || ng "ブロック外の追記が消えた"
 grep -q "^# グローバル方針(トークン倹約)" "$DCM/CLAUDE.md" && ok "CLAUDE.md: 管理ブロック内は最新テンプレへ復元" || ng "ブロック内が復元されない"
-# (4) マーカー無しの旧テンプレ → 管理ブロックへ移行(方針見出しは重複しない)
+# (4) マーカー無し & 現行テンプレと完全一致(追記ゼロ)→ 囲むだけ(重複しない)
 DCM2="$SB/claudemd2"; mkdir -p "$DCM2"
 cp "$ROOT/home/CLAUDE.md" "$DCM2/CLAUDE.md"
 CLAUDE_CONFIG_DIR="$DCM2" bash "$INSTALL" </dev/null >/dev/null 2>&1
-grep -qF "claude-settings managed" "$DCM2/CLAUDE.md" && ok "CLAUDE.md: 旧テンプレ(マーカー無)を管理ブロックへ移行" || ng "旧テンプレが移行されない"
-hc=$(grep -c "^# グローバル方針(トークン倹約)" "$DCM2/CLAUDE.md"); [ "$hc" = "1" ] && ok "CLAUDE.md: 移行で方針が重複しない(見出し1つ)" || ng "移行で重複した(見出し $hc 個)"
+grep -qF "claude-settings managed" "$DCM2/CLAUDE.md" && ok "CLAUDE.md: テンプレ完全一致(追記無)は管理ブロックで囲む" || ng "囲まれない"
+hc=$(grep -c "^# グローバル方針(トークン倹約)" "$DCM2/CLAUDE.md"); [ "$hc" = "1" ] && ok "CLAUDE.md: 囲み時に方針が重複しない(見出し1つ)" || ng "重複した(見出し $hc 個)"
+# (5) ★再発防止★ テンプレ由来(マーカー無)+ ユーザー追記 → 追記を1行も消さない
+DCM3="$SB/claudemd3"; mkdir -p "$DCM3"
+cp "$ROOT/home/CLAUDE.md" "$DCM3/CLAUDE.md"
+printf '\n## 自分の独自ルール\n- 秘密の設定X\n- プロジェクト固有Y\n' >> "$DCM3/CLAUDE.md"
+CLAUDE_CONFIG_DIR="$DCM3" bash "$INSTALL" </dev/null >/dev/null 2>&1
+{ grep -q "秘密の設定X" "$DCM3/CLAUDE.md" && grep -q "プロジェクト固有Y" "$DCM3/CLAUDE.md" && grep -q "自分の独自ルール" "$DCM3/CLAUDE.md"; } && ok "CLAUDE.md: テンプレ由来+追記でも、あなたの追記を1行も消さない(再発防止)" || ng "★再発★ 追記が消えた"
+grep -qF "claude-settings managed" "$DCM3/CLAUDE.md" && ok "CLAUDE.md: 追記を保持しつつ管理ブロックを追加" || ng "管理ブロックが入らない"
+# 2回目は冪等(追記も維持)
+CLAUDE_CONFIG_DIR="$DCM3" bash "$INSTALL" </dev/null >/dev/null 2>&1
+grep -q "秘密の設定X" "$DCM3/CLAUDE.md" && ok "CLAUDE.md: 再実行しても追記が維持される(冪等)" || ng "再実行で追記が消えた"
 # マニフェスト方式: あなたが編集した statusline/hooks/skills を上書きしない
 DMAN="$SB/manifest"; mkdir -p "$DMAN"
 CLAUDE_CONFIG_DIR="$DMAN" bash "$INSTALL" </dev/null >/dev/null 2>&1     # 初回配置(manifest 作成)
