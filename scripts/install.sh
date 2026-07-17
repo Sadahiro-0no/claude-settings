@@ -52,31 +52,66 @@ if [ "${CLAUDE_INSTALL_PLAN:-0}" = "1" ]; then
 fi
 # -----------------------------------------------------------------------------
 
-count=0; updated=0; skipped=0
+# ファイル配置は「マニフェスト方式」で、あなたが編集したファイルを上書きしない。
+# ~/.claude/.claude-settings-manifest に、前回インストールした各ファイルのハッシュを記録する。
+#   - 既存が無い            → 配置(記録)
+#   - 既存 == テンプレ       → スキップ(記録)
+#   - 既存 != テンプレ:
+#       ・記録ハッシュと一致(=前回入れた版のまま=未編集) → 更新(退避して上書き・記録)
+#       ・不一致/記録なし(=あなたが編集 or 由来不明)      → 上書きせず保持し、
+#         テンプレ新版を <file>.claude-settings-new に置く(あなたの版を壊さない)
+#   - CLAUDE_INSTALL_FORCE=1 で従来どおり一括上書き(退避あり)
+# settings.json・CLAUDE.md はそれぞれ専用のマージで扱うのでここでは対象外。
+MANIFEST="$DST/.claude-settings-manifest"
+NEWMANIFEST="$(mktemp)"
+FORCE="${CLAUDE_INSTALL_FORCE:-0}"
+hashof() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}';
+  else cksum "$1" | awk '{print $1"-"$2}'; fi
+}
+lookup_hash() { awk -F'\t' -v p="$1" '$2==p{print $1; exit}' "$MANIFEST" 2>/dev/null; }
+
+count=0; updated=0; skipped=0; preserved=0; preserved_list=""
 while IFS= read -r -d '' f; do
   rel="${f#"$SRC"/}"
   dest="$DST/$rel"
-  # settings.json と CLAUDE.md はユーザーの内容なので個別に扱う(ここでは触れない)。
-  # それ以外(statusline・hooks・skills 等)はテンプレート所有物なので更新で上書きしてよい。
   { [ "$rel" = "settings.json" ] || [ "$rel" = "CLAUDE.md" ]; } && continue
   count=$((count + 1))
-  # 内容が同一なら丸ごとスキップ(コピーもバックアップもしない=不要な mtime 更新を避ける)
-  if [ -e "$dest" ] && cmp -s "$f" "$dest"; then
-    skipped=$((skipped + 1)); continue
+  newhash="$(hashof "$f")"
+  if [ ! -e "$dest" ]; then
+    mkdir -p "$(dirname "$dest")"; cp -p "$f" "$dest"
+    updated=$((updated + 1)); printf '%s\t%s\n' "$newhash" "$rel" >> "$NEWMANIFEST"
+  elif cmp -s "$f" "$dest"; then
+    skipped=$((skipped + 1)); printf '%s\t%s\n' "$newhash" "$rel" >> "$NEWMANIFEST"
+    rm -f "$dest.claude-settings-new"   # 追いついたので新版マーカーは掃除
+  else
+    desthash="$(hashof "$dest")"; rec="$(lookup_hash "$rel")"
+    if [ "$FORCE" = "1" ] || { [ -n "$rec" ] && [ "$rec" = "$desthash" ]; }; then
+      # あなたが編集していない(前回入れた版のまま)or 強制 → 安全に更新
+      mkdir -p "$BK/$(dirname "$rel")"; cp -p "$dest" "$BK/$rel"
+      cp -p "$f" "$dest"; updated=$((updated + 1))
+      printf '%s\t%s\n' "$newhash" "$rel" >> "$NEWMANIFEST"
+      rm -f "$dest.claude-settings-new"
+    else
+      # あなたが編集した/由来不明 → 上書きせず保持。新版は隣に置く。
+      cp -p "$f" "$dest.claude-settings-new"
+      preserved=$((preserved + 1)); preserved_list="$preserved_list $rel"
+      [ -n "$rec" ] && printf '%s\t%s\n' "$rec" "$rel" >> "$NEWMANIFEST"
+    fi
   fi
-  if [ -e "$dest" ]; then
-    mkdir -p "$BK/$(dirname "$rel")"
-    cp -p "$dest" "$BK/$rel"
-  fi
-  mkdir -p "$(dirname "$dest")"
-  cp -p "$f" "$dest"
-  updated=$((updated + 1))
 done < <(find "$SRC" -type f -print0)
+mv "$NEWMANIFEST" "$MANIFEST" 2>/dev/null || rm -f "$NEWMANIFEST"
 
 chmod +x "$DST/statusline.sh" 2>/dev/null || true
 find "$DST/hooks" "$DST/skills" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 
-echo "導入完了: 更新 ${updated} / 変更なし ${skipped}(settings.json・CLAUDE.md を除く計 ${count} files)→ $DST"
+echo "導入完了: 更新 ${updated} / 変更なし ${skipped} / 保持 ${preserved}(settings.json・CLAUDE.md を除く計 ${count} files)→ $DST"
+if [ "$preserved" -gt 0 ]; then
+  echo "  あなたが編集した(と思われる)ファイルは上書きせず保持しました。テンプレ新版は各 <file>.claude-settings-new に置いています:"
+  for p in $preserved_list; do echo "    - $p (新版: ${p}.claude-settings-new)"; done
+  echo "  差分を確認して、更新したいものだけ new を反映してください(全部テンプレに合わせるなら CLAUDE_INSTALL_FORCE=1 で再実行)。"
+fi
 
 # ---- CLAUDE.md: 管理ブロック方式で更新(あなたの記述を保持)-----------------------
 # CLAUDE.md はユーザーのグローバルメモリ(自由記述)なので、丸ごと上書きしない。

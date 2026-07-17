@@ -365,6 +365,32 @@ cp "$ROOT/home/CLAUDE.md" "$DCM2/CLAUDE.md"
 CLAUDE_CONFIG_DIR="$DCM2" bash "$INSTALL" </dev/null >/dev/null 2>&1
 grep -qF "claude-settings managed" "$DCM2/CLAUDE.md" && ok "CLAUDE.md: 旧テンプレ(マーカー無)を管理ブロックへ移行" || ng "旧テンプレが移行されない"
 hc=$(grep -c "^# グローバル方針(トークン倹約)" "$DCM2/CLAUDE.md"); [ "$hc" = "1" ] && ok "CLAUDE.md: 移行で方針が重複しない(見出し1つ)" || ng "移行で重複した(見出し $hc 個)"
+# マニフェスト方式: あなたが編集した statusline/hooks/skills を上書きしない
+DMAN="$SB/manifest"; mkdir -p "$DMAN"
+CLAUDE_CONFIG_DIR="$DMAN" bash "$INSTALL" </dev/null >/dev/null 2>&1     # 初回配置(manifest 作成)
+[ -f "$DMAN/.claude-settings-manifest" ] && ok "manifest: 初回インストールで作成される" || ng "manifest が作られない"
+printf '\n# 自分のカスタム\n' >> "$DMAN/hooks/handoff-notice.sh"      # ユーザーが編集
+oman=$(CLAUDE_CONFIG_DIR="$DMAN" bash "$INSTALL" </dev/null 2>&1)
+grep -q "自分のカスタム" "$DMAN/hooks/handoff-notice.sh" && ok "manifest: 編集した hook を上書きせず保持" || ng "編集した hook が上書きされた"
+[ -f "$DMAN/hooks/handoff-notice.sh.claude-settings-new" ] && ok "manifest: テンプレ新版を .claude-settings-new として隣に置く" || ng "新版が置かれない"
+case "$oman" in *"保持 1"*"handoff-notice.sh"*) ok "manifest: 保持したファイルを明示通知" || ng "保持通知が不正" ;; *) ng "保持通知が出ない: [$oman]" ;; esac
+# 未編集ファイルは自動更新される(manifest 記録と一致 → 安全に上書き)
+printf '\n# pretend-old\n' >> "$DMAN/statusline.sh"                    # 旧版を演出
+nh=$(sha256sum "$DMAN/statusline.sh" 2>/dev/null | awk '{print $1}'); [ -n "$nh" ] || nh=$(shasum -a 256 "$DMAN/statusline.sh" | awk '{print $1}')
+awk -F'\t' -v OFS='\t' -v h="$nh" '$2=="statusline.sh"{$1=h} {print}' "$DMAN/.claude-settings-manifest" > "$DMAN/.m2" && mv "$DMAN/.m2" "$DMAN/.claude-settings-manifest"
+CLAUDE_CONFIG_DIR="$DMAN" bash "$INSTALL" </dev/null >/dev/null 2>&1
+grep -q "pretend-old" "$DMAN/statusline.sh" && ng "未編集ファイルが自動更新されない" || ok "manifest: 未編集ファイル(記録一致)は自動更新される"
+# CLAUDE_INSTALL_FORCE=1 で保持を無視して一括上書き
+printf '\n# force-me\n' >> "$DMAN/statusline.sh"
+CLAUDE_INSTALL_FORCE=1 CLAUDE_CONFIG_DIR="$DMAN" bash "$INSTALL" </dev/null >/dev/null 2>&1
+grep -q "force-me" "$DMAN/statusline.sh" && ng "FORCE=1 で上書きされない" || ok "manifest: CLAUDE_INSTALL_FORCE=1 で一括上書き(退避あり)"
+# .new を受理(mv)したら次回は掃除される
+DMAN2="$SB/manifest2"; mkdir -p "$DMAN2"
+CLAUDE_CONFIG_DIR="$DMAN2" bash "$INSTALL" </dev/null >/dev/null 2>&1
+printf '\n# e\n' >> "$DMAN2/statusline.sh"; CLAUDE_CONFIG_DIR="$DMAN2" bash "$INSTALL" </dev/null >/dev/null 2>&1
+mv "$DMAN2/statusline.sh.claude-settings-new" "$DMAN2/statusline.sh"
+CLAUDE_CONFIG_DIR="$DMAN2" bash "$INSTALL" </dev/null >/dev/null 2>&1
+[ -f "$DMAN2/statusline.sh.claude-settings-new" ] && ng ".new が掃除されない" || ok "manifest: 新版を受理後は .claude-settings-new を掃除"
 
 echo "== 9. トークン見積り(日本語) =="
 printf 'これは日本語のテストです。' > "$SB/jp.txt"
